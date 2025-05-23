@@ -73,12 +73,12 @@ from typing_extensions import (
     Union,
 )  # Added TypedDict, NotRequired
 
-from browspi.dom.views import (
+from browspi.services.dom.service import DomService
+from browspi.services.views import (
     DOMElementNode,
     DOMState,
     SelectorMap,
 )
-from browspi.dom_utils.service import DomService
 
 # Suppress specific LangChain Beta warning
 filterwarnings("ignore", category=LangChainBetaWarning)
@@ -515,8 +515,8 @@ class BrowserStateSummary:  # Does not inherit from the new DOMState
     url: str
     title: str
     tabs: List[TabInfo]
-    element_tree: DOMElementNode  # This is now from browspi.dom.views
-    selector_map: SelectorMap  # This is now from browspi.dom.views
+    element_tree: DOMElementNode  # This is now from browspi.services.views
+    selector_map: SelectorMap  # This is now from browspi.services.views
     screenshot: Optional[str] = None
     pixels_above: int = 0
     pixels_below: int = 0
@@ -655,9 +655,11 @@ class BrowserSession(BaseModel):
         title = await page.title() or ""
 
         # Initialize DomService from your browspi package
-        dom_service = DomService(page)  # This is now browspi.dom.service.DomService
+        dom_service = DomService(
+            page
+        )  # This is now browspi.services.service.DomService
 
-        # These types are now from browspi.dom.views
+        # These types are now from browspi.services.views
         element_tree_result: Optional[DOMElementNode] = None
         selector_map_result: SelectorMap = {}
 
@@ -680,7 +682,7 @@ class BrowserSession(BaseModel):
                 f"Error getting clickable elements from DomService: {e}", exc_info=True
             )
             # Fallback to a minimal empty DOMElementNode
-            element_tree_result = DOMElementNode(  # Ensure this matches browspi.dom.views.DOMElementNode constructor
+            element_tree_result = DOMElementNode(  # Ensure this matches browspi.services.views.DOMElementNode constructor
                 tag_name="body",
                 xpath="/html/body",
                 attributes={},

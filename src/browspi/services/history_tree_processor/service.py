@@ -1,7 +1,10 @@
 import hashlib
 
-from browspi.dom.history_tree_processor.view import DOMHistoryElement, HashedDomElement
-from browspi.dom.views import DOMElementNode
+from browspi.services.history_tree_processor.view import (
+    DOMHistoryElement,
+    HashedDomElement,
+)
+from browspi.services.views import DOMElementNode
 
 
 class HistoryTreeProcessor:

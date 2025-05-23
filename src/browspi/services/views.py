@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Optional
 
-from browspi.dom.history_tree_processor.view import (
+from browspi.services.history_tree_processor.view import (
     CoordinateSet,
     HashedDomElement,
     ViewportInfo,
@@ -127,7 +127,7 @@ class DOMElementNode(DOMBaseNode):
 
     @cached_property
     def hash(self) -> HashedDomElement:
-        from browspi.dom.history_tree_processor.service import (
+        from browspi.services.history_tree_processor.service import (
             HistoryTreeProcessor,
         )
 

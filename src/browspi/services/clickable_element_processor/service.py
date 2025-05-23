@@ -1,6 +1,6 @@
 import hashlib
 
-from browspi.dom.views import DOMElementNode
+from browspi.services.views import DOMElementNode
 
 
 class ClickableElementProcessor:

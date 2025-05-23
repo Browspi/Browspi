@@ -29,8 +29,8 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-browspi = "src.browspi.main:__main__"
-formatAll = "scripts.format_all:main"
+dev = "src.browspi.main:__main__"
+format = "scripts.format_all:main"
 
 [tool.black]
 line-length = 100

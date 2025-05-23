@@ -16,6 +16,6 @@ def main():
     subprocess.run("poetry run ruff format .", shell=True, check=True)
 
     print("🔍 Final lint check with ruff...")
-    subprocess.run("poetry run ruff check .", shell=True, check=False)
+    subprocess.run("poetry run ruff check . --fix", shell=True, check=False)
 
     print("✅ All formatting steps completed.")

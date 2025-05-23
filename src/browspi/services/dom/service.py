@@ -1,34 +1,29 @@
 import json
 import logging
+from dataclasses import dataclass
 from importlib import resources
-
-# from importlib import resources # Remove this
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
-# Adjust imports to use your new dom_definitions.py and utils
-from .dom_definitions import (  # Changed from browspi.dom.views
+from browspi.services.views import (
     DOMBaseNode,
     DOMElementNode,
     DOMState,
     DOMTextNode,
     SelectorMap,
-    ViewportInfo,  # Import the ViewportInfo defined in dom_definitions
-    time_execution_async,  # Changed from browspi.utils
 )
+from browspi.utils import time_execution_async
 
 logger = logging.getLogger(__name__)
 
-# Keep the ViewportInfo dataclass defined in the original service.py if it's used
-# OR ensure the one from dom_definitions is used consistently.
-# The dom_definitions.py now provides ViewportInfo, so the local one below can be removed
-# @dataclass
-# class ViewportInfo:
-#   width: int
-#   height: int
+
+@dataclass
+class ViewportInfo:
+    width: int
+    height: int
 
 
 class DomService:
@@ -37,7 +32,7 @@ class DomService:
         self.xpath_cache = {}
 
         self.js_code = (
-            resources.files("browspi.dom_utils").joinpath("buildDomTree.js").read_text()
+            resources.files("browspi.services").joinpath("buildDomTree.js").read_text()
         )
 
     # region - Clickable elements
