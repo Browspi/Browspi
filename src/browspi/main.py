@@ -127,7 +127,7 @@ def setup_logging():
     root = logging.getLogger()
     root.handlers = []
 
-    class BrowserUseFormatter(logging.Formatter):
+    class ProjectFormatter(logging.Formatter):
         def format(self, record):
             if isinstance(record.name, str) and record.name.startswith("__main__."):
                 record.name = (
@@ -140,11 +140,9 @@ def setup_logging():
     console = logging.StreamHandler(sys.stdout)
     if log_type == "result":
         console.setLevel("RESULT")
-        console.setFormatter(BrowserUseFormatter("%(message)s"))
+        console.setFormatter(ProjectFormatter("%(message)s"))
     else:
-        console.setFormatter(
-            BrowserUseFormatter("%(levelname)-8s [%(name)s] %(message)s")
-        )
+        console.setFormatter(ProjectFormatter("%(levelname)-8s [%(name)s] %(message)s"))
     root.addHandler(console)
     if log_type == "result":
         root.setLevel("RESULT")
@@ -383,9 +381,7 @@ class BrowserLaunchPersistentContextArgs(BrowserLaunchArgs, BrowserContextArgs):
     model_config = ConfigDict(
         extra="ignore", validate_assignment=False, revalidate_instances="always"
     )
-    user_data_dir: Optional[Union[str, Path]] = Path(
-        "~/.config/browseruse/profiles/default"
-    ).expanduser()
+    user_data_dir: Optional[Union[str, Path]] = Path("").expanduser()
 
 
 class BrowserProfile(
@@ -423,7 +419,7 @@ class BrowserProfile(
             "title",
         ]
     )
-    highlight_elements: bool = Field(default=True)
+    highlight_elements: bool = Field(default=False)
     viewport_expansion: int = Field(default=500)
     cookies_file: Optional[str] = Field(default=None)
     profile_directory: str = "Default"
@@ -821,12 +817,14 @@ class BrowserSession(BaseModel):
     async def _check_and_handle_navigation(self, page: Page) -> None:
         """Check if current page URL is allowed and handle if not."""
         if not self._is_url_allowed(page.url):
-            logger.warning(f'⛔️  Navigation to non-allowed URL detected: {page.url}')
+            logger.warning(f"⛔️  Navigation to non-allowed URL detected: {page.url}")
             try:
                 await self.go_back()
             except Exception as e:
-                logger.error(f'⛔️  Failed to go back after detecting non-allowed URL: {str(e)}')
-            raise URLNotAllowedError(f'Navigation to non-allowed URL: {page.url}')
+                logger.error(
+                    f"⛔️  Failed to go back after detecting non-allowed URL: {str(e)}"
+                )
+            raise URLNotAllowedError(f"Navigation to non-allowed URL: {page.url}")
 
     async def _wait_for_page_and_frames_load(
         self, timeout_overwrite: float | None = None
@@ -1450,20 +1448,27 @@ class Controller(Generic[Context]):
             return ActionResult(error=f"Tab ID {params.page_id} not found.")
 
         @self.action(
-            "Extract content from the current page based on a goal", # Description from your file
+            "Extract content from the current page based on a goal",  # Description from your file
             param_model=ExtractPageContentAction,
         )
         async def extract_content(
             params: ExtractPageContentAction,
             browser_session: BrowserSession,
-            page_extraction_llm: BaseChatModel, # This is an LLM call within the action
+            page_extraction_llm: BaseChatModel,  # This is an LLM call within the action
         ):
             page = await browser_session.get_current_page()
-            extracted_data_summary = f"Attempted to extract: '{params.goal}'." # Default summary
+            extracted_data_summary = (
+                f"Attempted to extract: '{params.goal}'."  # Default summary
+            )
 
             try:
                 # Try to get cleaner text from common main content areas first
-                main_content_selectors = ["main", "article", "[role='main']", "body"] # Prioritized selectors
+                main_content_selectors = [
+                    "main",
+                    "article",
+                    "[role='main']",
+                    "body",
+                ]  # Prioritized selectors
                 text_content = ""
                 logger.info(f"Attempting to extract text for goal: '{params.goal}'")
 
@@ -1476,55 +1481,79 @@ class Controller(Generic[Context]):
                             visible_element_text = ""
                             for i in range(count):
                                 element = content_elements.nth(i)
-                                if await element.is_visible(timeout=1000): # Short timeout for visibility check
-                                    visible_element_text = await element.inner_text(timeout=5000) # 5 sec timeout
+                                if await element.is_visible(
+                                    timeout=1000
+                                ):  # Short timeout for visibility check
+                                    visible_element_text = await element.inner_text(
+                                        timeout=5000
+                                    )  # 5 sec timeout
                                     if visible_element_text.strip():
-                                        break # Use the first visible element's text
-                            
+                                        break  # Use the first visible element's text
+
                             if visible_element_text.strip():
                                 text_content = visible_element_text.strip()
-                                logger.info(f"Successfully extracted text using selector '{selector}'. Length: {len(text_content)}")
-                                break # Got content from a prioritized selector
+                                logger.info(
+                                    f"Successfully extracted text using selector '{selector}'. Length: {len(text_content)}"
+                                )
+                                break  # Got content from a prioritized selector
                             else:
-                                logger.debug(f"Selector '{selector}' found elements, but no visible text obtained.")
+                                logger.debug(
+                                    f"Selector '{selector}' found elements, but no visible text obtained."
+                                )
                         else:
                             logger.debug(f"Selector '{selector}' not found on page.")
                     except PlaywrightTimeoutError:
-                        logger.warning(f"Timeout extracting inner_text from selector '{selector}'.")
+                        logger.warning(
+                            f"Timeout extracting inner_text from selector '{selector}'."
+                        )
                         continue
                     except Exception as el_err:
-                        logger.debug(f"Error processing selector '{selector}': {el_err}")
+                        logger.debug(
+                            f"Error processing selector '{selector}': {el_err}"
+                        )
                         continue
-                
+
                 if not text_content.strip():
-                    logger.warning("No text content extracted from main content selectors. Full page text might be too noisy or extraction might fail.")
+                    logger.warning(
+                        "No text content extracted from main content selectors. Full page text might be too noisy or extraction might fail."
+                    )
                     # As a last resort, if no specific content area worked, you could try a limited body text or indicate failure.
                     # For this iteration, we'll proceed with potentially empty text_content if nothing specific was found,
                     # letting the sub-LLM handle the "nothing found" case.
 
             except Exception as e:
-                logger.error(f"Critical error during page text scraping for 'extract_content': {type(e).__name__} - {e}", exc_info=True)
-                return ActionResult(error=f"Failed to scrape page content: {type(e).__name__}", include_in_memory=True)
+                logger.error(
+                    f"Critical error during page text scraping for 'extract_content': {type(e).__name__} - {e}",
+                    exc_info=True,
+                )
+                return ActionResult(
+                    error=f"Failed to scrape page content: {type(e).__name__}",
+                    include_in_memory=True,
+                )
 
             # Refine the goal for the page_extraction_llm
             # The original params.goal might be something like "Extract the titles and links of 5 news articles..."
             # The sub-LLM should just focus on finding titles and links based on the main goal.
             simplified_extraction_goal = params.goal
             if "extract the titles and links of 5 news articles" in params.goal.lower():
-                simplified_extraction_goal = "titles and links of news articles about COVID-19 in Vietnam" # Be more direct
+                simplified_extraction_goal = "titles and links of news articles about COVID-19 in Vietnam"  # Be more direct
 
             # Limit the text sent to the sub-LLM to a reasonable length
             # Increased slightly, but be mindful of token limits and sub-LLM performance
             max_text_for_sub_llm = 10000
             if len(text_content) > max_text_for_sub_llm:
-                logger.info(f"Truncating text_content for page_extraction_llm from {len(text_content)} to {max_text_for_sub_llm} chars.")
+                logger.info(
+                    f"Truncating text_content for page_extraction_llm from {len(text_content)} to {max_text_for_sub_llm} chars."
+                )
                 text_to_process = text_content[:max_text_for_sub_llm]
             else:
                 text_to_process = text_content
-            
+
             if not text_to_process.strip():
-                 logger.warning(f"No text content available to send to page_extraction_llm for goal: '{simplified_extraction_goal}'")
-                 extracted_data_summary = f"No text content found on the page to process for: '{simplified_extraction_goal}'."
+                logger.warning(
+                    f"No text content available to send to page_extraction_llm for goal: '{simplified_extraction_goal}'"
+                )
+                extracted_data_summary = f"No text content found on the page to process for: '{simplified_extraction_goal}'."
             elif page_extraction_llm:
                 # Construct a more specific prompt for the sub-LLM
                 sub_llm_prompt = (
@@ -1534,27 +1563,46 @@ class Controller(Generic[Context]):
                     "Present the findings as a clear, well-structured list. "
                     "If no relevant information or articles are found, explicitly state 'No specific information or articles found matching the goal.'\n\n"
                     "TEXT_TO_PROCESS:\n"
-                    f"\"\"\"{text_to_process}\"\"\""
+                    f'"""{text_to_process}"""'
                 )
                 try:
-                    logger.info(f"Sending to page_extraction_llm. Effective Goal: '{simplified_extraction_goal}'. Text length: {len(text_to_process)}")
+                    logger.info(
+                        f"Sending to page_extraction_llm. Effective Goal: '{simplified_extraction_goal}'. Text length: {len(text_to_process)}"
+                    )
                     llm_response = await page_extraction_llm.ainvoke(sub_llm_prompt)
-                    extracted_data = llm_response.content if hasattr(llm_response, "content") else str(llm_response)
+                    extracted_data = (
+                        llm_response.content
+                        if hasattr(llm_response, "content")
+                        else str(llm_response)
+                    )
 
-                    if not extracted_data.strip() or "no specific information or articles found" in extracted_data.lower():
+                    if (
+                        not extracted_data.strip()
+                        or "no specific information or articles found"
+                        in extracted_data.lower()
+                    ):
                         extracted_data_summary = f"Sub-LLM found no specific articles/information for: '{simplified_extraction_goal}'."
                     else:
                         # Success, use the direct data from sub-LLM
-                        extracted_data_summary = extracted_data 
-                    logger.info(f"page_extraction_llm raw response snippet: {extracted_data_summary[:300]}...")
+                        extracted_data_summary = extracted_data
+                    logger.info(
+                        f"page_extraction_llm raw response snippet: {extracted_data_summary[:300]}..."
+                    )
 
                 except Exception as e:
-                    logger.error(f"page_extraction_llm call failed: {type(e).__name__} - {e}", exc_info=True)
+                    logger.error(
+                        f"page_extraction_llm call failed: {type(e).__name__} - {e}",
+                        exc_info=True,
+                    )
                     extracted_data_summary = f"Error during sub-LLM extraction for '{simplified_extraction_goal}': {type(e).__name__}."
             else:
-                extracted_data_summary = "page_extraction_llm not configured; cannot process extracted text."
-            
-            return ActionResult(extracted_content=extracted_data_summary, include_in_memory=True)
+                extracted_data_summary = (
+                    "page_extraction_llm not configured; cannot process extracted text."
+                )
+
+            return ActionResult(
+                extracted_content=extracted_data_summary, include_in_memory=True
+            )
 
         @self.action(
             "Send special keys or keyboard shortcuts", param_model=SendKeysAction
