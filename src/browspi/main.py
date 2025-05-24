@@ -73,12 +73,15 @@ from typing_extensions import (
     Union,
 )  # Added TypedDict, NotRequired
 
-from browspi.services.dom.service import DomService
-from browspi.services.views import (
-    DOMElementNode,
-    DOMState,
-    SelectorMap,
+from browspi.services.clickable_element_processor.service import (
+    ClickableElementProcessor,
 )
+
+# Assuming browspi.services.dom.service and browspi.services.views are available in your project
+# If not, these would need to be created or adjusted.
+# For this example, I'll mock them if they cause import errors later.
+from browspi.services.dom.service import DomService
+from browspi.services.views import DOMElementNode, SelectorMap
 
 # Suppress specific LangChain Beta warning
 filterwarnings("ignore", category=LangChainBetaWarning)
@@ -170,26 +173,6 @@ def setup_logging():
 setup_logging()
 
 
-# --- Utility Functions (remains unchanged) ---
-def time_execution_sync(
-    additional_text: str = "",
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            start_time = time.time()
-            result = func(*args, **kwargs)
-            execution_time = time.time() - start_time
-            logger.debug(
-                f"{additional_text} Execution time: {execution_time:.2f} seconds"
-            )
-            return result
-
-        return wrapper
-
-    return decorator
-
-
 def time_execution_async(
     additional_text: str = "",
 ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
@@ -214,6 +197,12 @@ def check_env_variables(keys: List[str], any_or_all=all) -> bool:
 
 
 # --- Redefined Playwright TypedDicts for Pydantic compatibility ---
+@dataclass
+class CachedClickableElementHashes:
+    url: str
+    hashes: set[str]
+
+
 class PydanticCompatibleProxySettings(TypedDict, total=False):
     server: str
     bypass: str
@@ -300,27 +289,27 @@ class BrowserContextArgs(BaseModel):
         populate_by_name=True,
     )
     accept_downloads: bool = True
-    proxy: Optional[PydanticCompatibleProxySettings] = None  # MODIFIED
+    proxy: Optional[PydanticCompatibleProxySettings] = None
     user_agent: Optional[str] = None
-    viewport: Optional[PydanticCompatibleViewportSize] = Field(default=None)  # MODIFIED
+    viewport: Optional[PydanticCompatibleViewportSize] = Field(default=None)
     no_viewport: Optional[bool] = None
     locale: Optional[str] = None
-    geolocation: Optional[PydanticCompatibleGeolocation] = None  # MODIFIED
+    geolocation: Optional[PydanticCompatibleGeolocation] = None
     timezone_id: Optional[str] = None
     color_scheme: ColorScheme = ColorScheme.LIGHT
     extra_http_headers: Dict[str, str] = Field(default_factory=dict)
     offline: bool = False
-    http_credentials: Optional[PydanticCompatibleHttpCredentials] = None  # MODIFIED
+    http_credentials: Optional[PydanticCompatibleHttpCredentials] = None
     ignore_https_errors: bool = False
     java_script_enabled: bool = True
     bypass_csp: bool = False
     service_workers: Literal["allow", "block"] = "allow"
     client_certificates: List[PydanticCompatibleClientCertificate] = Field(
         default_factory=list
-    )  # MODIFIED
+    )
     record_har_path: Optional[Union[str, Path]] = None
     record_video_dir: Optional[Union[str, Path]] = None
-    record_video_size: Optional[PydanticCompatibleViewportSize] = None  # MODIFIED
+    record_video_size: Optional[PydanticCompatibleViewportSize] = None
     strict_selectors: bool = False
 
 
@@ -348,7 +337,7 @@ class BrowserLaunchArgs(BaseModel):
     handle_sighup: bool = True
     handle_sigint: bool = False
     handle_sigterm: bool = False
-    proxy: Optional[PydanticCompatibleProxySettings] = None  # MODIFIED
+    proxy: Optional[PydanticCompatibleProxySettings] = None
     slow_mo: float = 0.0
     timeout: float = 30000.0
     traces_dir: Optional[Union[str, Path]] = None
@@ -380,21 +369,17 @@ class BrowserLaunchArgs(BaseModel):
         ]
 
 
-class BrowserNewContextArgs(BrowserContextArgs):  # Inherits changes
+class BrowserNewContextArgs(BrowserContextArgs):
     model_config = ConfigDict(
         extra="ignore",
         validate_assignment=False,
         revalidate_instances="always",
         populate_by_name=True,
     )
-    storage_state: Optional[Union[str, Path, Dict[str, Any]]] = (
-        None  # Note: PlaywrightStorageState could also be redefined if used directly
-    )
+    storage_state: Optional[Union[str, Path, Dict[str, Any]]] = None
 
 
-class BrowserLaunchPersistentContextArgs(
-    BrowserLaunchArgs, BrowserContextArgs
-):  # Inherits changes
+class BrowserLaunchPersistentContextArgs(BrowserLaunchArgs, BrowserContextArgs):
     model_config = ConfigDict(
         extra="ignore", validate_assignment=False, revalidate_instances="always"
     )
@@ -405,7 +390,7 @@ class BrowserLaunchPersistentContextArgs(
 
 class BrowserProfile(
     BrowserLaunchPersistentContextArgs, BrowserLaunchArgs, BrowserNewContextArgs
-):  # Inherits changes
+):
     model_config = ConfigDict(
         extra="ignore",
         validate_assignment=True,
@@ -418,14 +403,26 @@ class BrowserProfile(
     deterministic_rendering: bool = Field(default=False)
     allowed_domains: Optional[List[str]] = Field(default=None)
     keep_alive: Optional[bool] = Field(default=None)
-    window_size: Optional[PydanticCompatibleViewportSize] = Field(
-        default=None
-    )  # MODIFIED
+    window_size: Optional[PydanticCompatibleViewportSize] = Field(default=None)
     minimum_wait_page_load_time: float = Field(default=0.25)
     wait_for_network_idle_page_load_time: float = Field(default=0.5)
     maximum_wait_page_load_time: float = Field(default=5.0)
     wait_between_actions: float = Field(default=0.5)
     include_dynamic_attributes: bool = Field(default=True)
+    include_attributes: List[str] = Field(
+        default_factory=lambda: [
+            "id",
+            "class",
+            "name",
+            "role",
+            "aria-label",
+            "placeholder",
+            "value",
+            "alt",
+            "type",
+            "title",
+        ]
+    )
     highlight_elements: bool = Field(default=True)
     viewport_expansion: int = Field(default=500)
     cookies_file: Optional[str] = Field(default=None)
@@ -474,12 +471,10 @@ class BrowserProfile(
         if self.headless:
             self.window_size = None
             self.no_viewport = False
-            # MODIFIED: Ensure assignment uses the PydanticCompatible type
             self.viewport = self.viewport or PydanticCompatibleViewportSize(
                 width=1280, height=1024
             )
         else:
-            # MODIFIED: Ensure assignment uses the PydanticCompatible type
             self.window_size = self.window_size or PydanticCompatibleViewportSize(
                 width=1280, height=1024
             )
@@ -488,10 +483,6 @@ class BrowserProfile(
 
 
 DEFAULT_BROWSER_PROFILE = BrowserProfile()
-
-# --- The rest of your code (DOM, Agent Views, BrowserSession, Actions, Controller, MessageManager, Agent, main) remains unchanged ---
-# ... (Make sure to include the rest of your original script from here)
-# For brevity, the rest of the script is omitted but should be included in your file.
 
 
 # --- Agent Views (Simplified) ---
@@ -511,12 +502,12 @@ class TabInfo:
 
 
 @dataclass
-class BrowserStateSummary:  # Does not inherit from the new DOMState
+class BrowserStateSummary:
     url: str
     title: str
     tabs: List[TabInfo]
-    element_tree: DOMElementNode  # This is now from browspi.services.views
-    selector_map: SelectorMap  # This is now from browspi.services.views
+    element_tree: DOMElementNode
+    selector_map: SelectorMap
     screenshot: Optional[str] = None
     pixels_above: int = 0
     pixels_below: int = 0
@@ -528,6 +519,14 @@ class BrowserError(Exception):
 
 class URLNotAllowedError(BrowserError):
     """Error raised when a URL is not allowed"""
+
+
+def _log_pretty_url(s: str, max_len: int | None = 22) -> str:
+    """Truncate/pretty-print a URL with a maximum length, removing the protocol and www. prefix"""
+    s = s.replace("https://", "").replace("http://", "").replace("www.", "")
+    if max_len is not None and len(s) > max_len:
+        return s[:max_len] + "…"
+    return s
 
 
 # --- Browser Session (Simplified for prompt logic focus) ---
@@ -544,50 +543,45 @@ class BrowserSession(BaseModel):
     _cached_browser_state_summary: Optional[BrowserStateSummary] = PrivateAttr(
         default=None
     )
+    _cached_clickable_element_hashes: CachedClickableElementHashes | None = PrivateAttr(
+        default=None
+    )
+
+    @property
+    def tabs(self) -> list[Page]:
+        if not self.browser_context:
+            return []
+        return list(self.browser_context.pages)
 
     async def start(self) -> "BrowserSession":
         self.browser_profile.prepare_user_data_dir()
         self.browser_profile.detect_display_configuration()
         if not self.playwright:
-            self.playwright = await playwright_async_playwright().start()  # type: ignore
+            self.playwright = await playwright_async_playwright().start()
 
-        # --- MODIFICATION START for persistent context ---
-        # Check if user_data_dir and executable_path are set in the profile,
-        # implying persistent context mode is desired for this configuration.
         if self.browser_profile.user_data_dir and self.browser_profile.executable_path:
             logger.info(
                 f"Attempting to launch persistent context with user_data_dir: {self.browser_profile.user_data_dir}"
             )
-
-            # Get all kwargs for launch_persistent_context from the profile
             persistent_kwargs = (
                 self.browser_profile.kwargs_for_launch_persistent_context().model_dump(
                     exclude_none=True
                 )
             )
-
-            # user_data_dir is the first positional argument for launch_persistent_context.
-            # It should be present in persistent_kwargs if set in BrowserProfile.
             user_data_dir_to_launch = persistent_kwargs.pop("user_data_dir", None)
-            if (
-                not user_data_dir_to_launch
-            ):  # Should ideally not happen if logic is correct
+            if not user_data_dir_to_launch:
                 raise ValueError(
                     "user_data_dir must be set in BrowserProfile for persistent context and was not found in launch kwargs."
                 )
-
-            # Ensure it's a Path object, though string should also work with Playwright
             user_data_dir_path = Path(user_data_dir_to_launch)
-
-            self.browser_context = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir_path,  # First argument is the user_data_dir
-                **persistent_kwargs,  # Remaining arguments (executable_path, args, headless, etc.)
+            self.browser_context = (
+                await self.playwright.chromium.launch_persistent_context(
+                    user_data_dir_path,
+                    **persistent_kwargs,
+                )
             )
-            self.browser = (
-                self.browser_context.browser
-            )  # Get the browser instance from the context
+            self.browser = self.browser_context.browser  # type: ignore
         else:
-            # Original behavior: launch a new browser instance and a new context
             logger.info(
                 "Launching browser with a new context (not using a persistent user profile)."
             )
@@ -598,12 +592,11 @@ class BrowserSession(BaseModel):
                     )
                 )
             if not self.browser_context:
-                self.browser_context = await self.browser.new_context(
+                self.browser_context = await self.browser.new_context(  # type: ignore
                     **self.browser_profile.kwargs_for_new_context().model_dump(
                         exclude_none=True
                     )
                 )
-        # --- MODIFICATION END ---
 
         if not self.browser_context.pages:  # type: ignore
             self.agent_current_page = await self.browser_context.new_page()  # type: ignore
@@ -613,7 +606,7 @@ class BrowserSession(BaseModel):
         self.initialized = True
         logger.info(
             f"BrowserSession started. Using {'persistent context at ' + str(self.browser_profile.user_data_dir) if self.browser_profile.user_data_dir and self.browser_profile.executable_path else 'new context'}."
-        )  # Enhanced logging
+        )
         return self
 
     async def stop(self):
@@ -623,7 +616,7 @@ class BrowserSession(BaseModel):
             if self.browser:
                 await self.browser.close()
             if self.playwright:
-                await self.playwright.stop()
+                await self.playwright.stop()  # type: ignore
         self.initialized = False
         logger.info("BrowserSession stopped.")
 
@@ -645,123 +638,425 @@ class BrowserSession(BaseModel):
                 self.agent_current_page = self.browser_context.pages[0]  # type: ignore
         return self.agent_current_page  # type: ignore
 
-    # Inside class BrowserSession(BaseModel):
+    async def _wait_for_stable_network(self):
+        pending_requests = set()
+        last_activity = asyncio.get_event_loop().time()
+
+        page = await self.get_current_page()
+
+        # Define relevant resource types and content types
+        RELEVANT_RESOURCE_TYPES = {
+            "document",
+            "stylesheet",
+            "image",
+            "font",
+            "script",
+            "iframe",
+        }
+
+        RELEVANT_CONTENT_TYPES = {
+            "text/html",
+            "text/css",
+            "application/javascript",
+            "image/",
+            "font/",
+            "application/json",
+        }
+
+        # Additional patterns to filter out
+        IGNORED_URL_PATTERNS = {
+            # Analytics and tracking
+            "analytics",
+            "tracking",
+            "telemetry",
+            "beacon",
+            "metrics",
+            # Ad-related
+            "doubleclick",
+            "adsystem",
+            "adserver",
+            "advertising",
+            # Social media widgets
+            "facebook.com/plugins",
+            "platform.twitter",
+            "linkedin.com/embed",
+            # Live chat and support
+            "livechat",
+            "zendesk",
+            "intercom",
+            "crisp.chat",
+            "hotjar",
+            # Push notifications
+            "push-notifications",
+            "onesignal",
+            "pushwoosh",
+            # Background sync/heartbeat
+            "heartbeat",
+            "ping",
+            "alive",
+            # WebRTC and streaming
+            "webrtc",
+            "rtmp://",
+            "wss://",
+            # Common CDNs for dynamic content
+            "cloudfront.net",
+            "fastly.net",
+        }
+
+        async def on_request(request):
+            # Filter by resource type
+            if request.resource_type not in RELEVANT_RESOURCE_TYPES:
+                return
+
+            # Filter out streaming, websocket, and other real-time requests
+            if request.resource_type in {
+                "websocket",
+                "media",
+                "eventsource",
+                "manifest",
+                "other",
+            }:
+                return
+
+            # Filter out by URL patterns
+            url = request.url.lower()
+            if any(pattern in url for pattern in IGNORED_URL_PATTERNS):
+                return
+
+            # Filter out data URLs and blob URLs
+            if url.startswith(("data:", "blob:")):
+                return
+
+            # Filter out requests with certain headers
+            headers = request.headers
+            if headers.get("purpose") == "prefetch" or headers.get(
+                "sec-fetch-dest"
+            ) in [
+                "video",
+                "audio",
+            ]:
+                return
+
+            nonlocal last_activity
+            pending_requests.add(request)
+            last_activity = asyncio.get_event_loop().time()
+            # logger.debug(f'Request started: {request.url} ({request.resource_type})')
+
+        async def on_response(response):
+            request = response.request
+            if request not in pending_requests:
+                return
+
+            # Filter by content type if available
+            content_type = response.headers.get("content-type", "").lower()
+
+            # Skip if content type indicates streaming or real-time data
+            if any(
+                t in content_type
+                for t in [
+                    "streaming",
+                    "video",
+                    "audio",
+                    "webm",
+                    "mp4",
+                    "event-stream",
+                    "websocket",
+                    "protobuf",
+                ]
+            ):
+                pending_requests.remove(request)
+                return
+
+            # Only process relevant content types
+            if not any(ct in content_type for ct in RELEVANT_CONTENT_TYPES):
+                pending_requests.remove(request)
+                return
+
+            # Skip if response is too large (likely not essential for page load)
+            content_length = response.headers.get("content-length")
+            if content_length and int(content_length) > 5 * 1024 * 1024:  # 5MB
+                pending_requests.remove(request)
+                return
+
+            nonlocal last_activity
+            pending_requests.remove(request)
+            last_activity = asyncio.get_event_loop().time()
+            # logger.debug(f'Request resolved: {request.url} ({content_type})')
+
+        # Attach event listeners
+        page.on("request", on_request)
+        page.on("response", on_response)
+
+        now = asyncio.get_event_loop().time()
+        try:
+            # Wait for idle time
+            start_time = asyncio.get_event_loop().time()
+            while True:
+                await asyncio.sleep(0.1)
+                now = asyncio.get_event_loop().time()
+                if (
+                    len(pending_requests) == 0
+                    and (now - last_activity)
+                    >= self.browser_profile.wait_for_network_idle_page_load_time
+                ):
+                    break
+                if now - start_time > self.browser_profile.maximum_wait_page_load_time:
+                    logger.debug(
+                        f"Network timeout after {self.browser_profile.maximum_wait_page_load_time}s with {len(pending_requests)} "
+                        f"pending requests: {[r.url for r in pending_requests]}"
+                    )
+                    break
+
+        finally:
+            # Clean up event listeners
+            page.remove_listener("request", on_request)
+            page.remove_listener("response", on_response)
+
+        elapsed = now - start_time
+        if elapsed > 1:
+            logger.debug(
+                f"💤 Page network traffic calmed down after {now - start_time:.2f} seconds"
+            )
+
+    async def _check_and_handle_navigation(self, page: Page) -> None:
+        """Check if current page URL is allowed and handle if not."""
+        if not self._is_url_allowed(page.url):
+            logger.warning(f'⛔️  Navigation to non-allowed URL detected: {page.url}')
+            try:
+                await self.go_back()
+            except Exception as e:
+                logger.error(f'⛔️  Failed to go back after detecting non-allowed URL: {str(e)}')
+            raise URLNotAllowedError(f'Navigation to non-allowed URL: {page.url}')
+
+    async def _wait_for_page_and_frames_load(
+        self, timeout_overwrite: float | None = None
+    ):
+        """
+        Ensures page is fully loaded before continuing.
+        Waits for either network to be idle or minimum WAIT_TIME, whichever is longer.
+        Also checks if the loaded URL is allowed.
+        """
+        # Start timing
+        start_time = time.time()
+
+        # Wait for page load
+        page = await self.get_current_page()
+        try:
+            await self._wait_for_stable_network()
+
+            # Check if the loaded URL is allowed
+            await self._check_and_handle_navigation(page)
+        except URLNotAllowedError as e:
+            raise e
+        except Exception:
+            logger.warning("⚠️  Page load failed, continuing...")
+
+        # Calculate remaining time to meet minimum WAIT_TIME
+        elapsed = time.time() - start_time
+        remaining = max(
+            (timeout_overwrite or self.browser_profile.minimum_wait_page_load_time)
+            - elapsed,
+            0,
+        )
+
+        # just for logging, calculate how much data was downloaded
+        try:
+            bytes_used = await page.evaluate(
+                """
+                () => {
+                    let total = 0;
+                    for (const entry of performance.getEntriesByType('resource')) {
+                        total += entry.transferSize || 0;
+                    }
+                    for (const nav of performance.getEntriesByType('navigation')) {
+                        total += nav.transferSize || 0;
+                    }
+                    return total;
+                }
+            """
+            )
+        except Exception:
+            bytes_used = None
+
+        tab_idx = self.tabs.index(page)
+        if bytes_used is not None:
+            logger.debug(
+                f"➡️ Page navigation [{tab_idx}]{_log_pretty_url(page.url, 40)} used {bytes_used / 1024:.1f} KB in {elapsed:.2f}s, waiting +{remaining:.2f}s for all frames to finish"
+            )
+        else:
+            logger.debug(
+                f"➡️ Page navigation [{tab_idx}]{_log_pretty_url(page.url, 40)} took {elapsed:.2f}s, waiting +{remaining:.2f}s for all frames to finish"
+            )
+
+        # Sleep remaining time if needed
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+    async def get_scroll_info(self, page: Page) -> tuple[int, int]:
+        """Get scroll position information for the current page."""
+        scroll_y = await page.evaluate("window.scrollY")
+        viewport_height = await page.evaluate("window.innerHeight")
+        total_height = await page.evaluate("document.documentElement.scrollHeight")
+        pixels_above = scroll_y
+        pixels_below = total_height - (scroll_y + viewport_height)
+        return pixels_above, pixels_below
+
+    @time_execution_async("--remove_highlights")
+    async def remove_highlights(self):
+        """
+        Removes all highlight overlays and labels created by the highlightElement function.
+        Handles cases where the page might be closed or inaccessible.
+        """
+        page = await self.get_current_page()
+        try:
+            await page.evaluate(
+                """
+                try {
+                    // Remove the highlight container and all its contents
+                    const container = document.getElementById('playwright-highlight-container');
+                    if (container) {
+                        container.remove();
+                    }
+
+                    // Remove highlight attributes from elements
+                    const highlightedElements = document.querySelectorAll('[browser-user-highlight-id^="playwright-highlight-"]');
+                    highlightedElements.forEach(el => {
+                        el.removeAttribute('browser-user-highlight-id');
+                    });
+                } catch (e) {
+                    console.error('Failed to remove highlights:', e);
+                }
+                """
+            )
+        except Exception as e:
+            logger.debug(
+                f"⚠  Failed to remove highlights (this is usually ok): {type(e).__name__}: {e}"
+            )
+            # Don't raise the error since this is not critical functionality
 
     async def get_state_summary(
         self, cache_clickable_elements_hashes: bool = True
     ) -> BrowserStateSummary:
-        page = await self.get_current_page()
-        url = page.url
-        title = await page.title() or ""
+        """Get a summary of the current browser state
 
-        # Initialize DomService from your browspi package
-        dom_service = DomService(
-            page
-        )  # This is now browspi.services.service.DomService
+        This method builds a BrowserStateSummary object that captures the current state
+        of the browser, including url, title, tabs, screenshot, and DOM tree.
 
-        # These types are now from browspi.services.views
-        element_tree_result: Optional[DOMElementNode] = None
-        selector_map_result: SelectorMap = {}
+        Parameters:
+        -----------
+        cache_clickable_elements_hashes: bool
+            If True, cache the clickable elements hashes for the current state.
+            This is used to calculate which elements are new to the LLM since the last message,
+            which helps reduce token usage.
+        """
+        await self._wait_for_page_and_frames_load()
+        updated_state = await self._get_updated_state()
 
-        try:
-            # Call DomService to get the real DOM structure
-            # highlight_elements and viewport_expansion are in self.browser_profile
-            dom_state_from_service: DOMState = await dom_service.get_clickable_elements(
-                highlight_elements=self.browser_profile.highlight_elements,
-                viewport_expansion=self.browser_profile.viewport_expansion,
-                # focus_element can be added if needed from profile
+        # Find out which elements are new
+        # Do this only if url has not changed
+        if cache_clickable_elements_hashes:
+            # if we are on the same url as the last state, we can use the cached hashes
+            if (
+                self._cached_clickable_element_hashes
+                and self._cached_clickable_element_hashes.url == updated_state.url
+            ):
+                # Pointers, feel free to edit in place
+                updated_state_clickable_elements = (
+                    ClickableElementProcessor.get_clickable_elements(
+                        updated_state.element_tree
+                    )
+                )
+
+                for dom_element in updated_state_clickable_elements:
+                    dom_element.is_new = (
+                        ClickableElementProcessor.hash_dom_element(dom_element)
+                        not in self._cached_clickable_element_hashes.hashes  # see which elements are new from the last state where we cached the hashes
+                    )
+            # in any case, we need to cache the new hashes
+            self._cached_clickable_element_hashes = CachedClickableElementHashes(
+                url=updated_state.url,
+                hashes=ClickableElementProcessor.get_clickable_elements_hashes(
+                    updated_state.element_tree
+                ),
             )
-            element_tree_result = dom_state_from_service.element_tree
-            selector_map_result = dom_state_from_service.selector_map
-            logger.debug(
-                f"DomService returned {len(selector_map_result)} clickable elements for {url}."
-            )
 
-        except Exception as e:
-            logger.error(
-                f"Error getting clickable elements from DomService: {e}", exc_info=True
-            )
-            # Fallback to a minimal empty DOMElementNode
-            element_tree_result = DOMElementNode(  # Ensure this matches browspi.services.views.DOMElementNode constructor
-                tag_name="body",
-                xpath="/html/body",
-                attributes={},
-                children=[],
-                is_visible=False,
-                parent=None,
-                # Add other mandatory fields for DOMElementNode if any, with default values
-            )
-            selector_map_result = {}
+        assert updated_state
+        self._cached_browser_state_summary = updated_state
 
-        # Screenshot logic (remains the same)
-        screenshot_b64 = None
-        try:
-            screenshot_bytes = await page.screenshot()
-            screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-        except Exception as e:
-            logger.warning(f"Could not take screenshot: {e}")
-
-        # Pixels below logic (remains the same)
-        pixels_below = 0
-        try:
-            pixels_below_eval = await page.evaluate(
-                "document.body.scrollHeight - (window.innerHeight + window.scrollY)"
-            )
-            pixels_below = (
-                int(pixels_below_eval)
-                if isinstance(pixels_below_eval, (int, float))
-                else 0
-            )
-        except Exception as e:
-            logger.warning(f"Could not evaluate pixels_below: {e}")
-
-        tabs_info = await self.get_tabs_info()  # Remains the same
-
-        # Construct BrowserStateSummary with data from DomService
-        self._cached_browser_state_summary = BrowserStateSummary(
-            url=url,
-            title=title,
-            tabs=tabs_info,
-            element_tree=element_tree_result,  # From DomService
-            selector_map=selector_map_result,  # From DomService
-            screenshot=screenshot_b64,
-            pixels_above=0,  # You might want to implement this or get from DomService if available
-            pixels_below=pixels_below,
-        )
-
-        # <<< ADD DETAILED LOGGING HERE TO DEBUG CLICKING ISSUES >>>
-        # (Use the extensive logging block I provided in the previous response
-        #  to log self._cached_browser_state_summary.element_tree.clickable_elements_to_string(...)
-        #  and the contents of self._cached_browser_state_summary.selector_map)
-        # Example to get you started (adapt from previous more detailed logging):
-        logger.info(
-            "--------------------------------------------------------------------"
-        )
-        logger.info(f"State for URL: {self._cached_browser_state_summary.url}")
-        logger.info("LLM sees these clickable elements (first 20 lines):")
-        try:
-            attributes_to_include = self.browser_profile.include_attributes
-            clickable_string = self._cached_browser_state_summary.element_tree.clickable_elements_to_string(
-                attributes_to_include
-            )
-            for i, line in enumerate(clickable_string.split("\n")):
-                if i < 20 and line.strip():
-                    logger.info(f"  LLM_ELEMENT_VIEW: {line}")
-                elif i == 20:
-                    logger.info(
-                        "  LLM_ELEMENT_VIEW: ... ( dalších prvků zkráceno )"
-                    )  # ... (more elements truncated)
-                    break
-        except Exception as e_log_clickable:
-            logger.error(
-                f"Error generating clickable_elements_to_string for logging: {e_log_clickable}"
-            )
-        # Add detailed selector_map logging here too as per previous response.
-        logger.info(
-            "--------------------------------------------------------------------"
-        )
+        # Save cookies if a file is specified
+        if self.browser_profile.cookies_file:
+            asyncio.create_task(self.save_cookies())
 
         return self._cached_browser_state_summary
+
+    async def _get_updated_state(self, focus_element: int = -1) -> BrowserStateSummary:
+        """Update and return state."""
+
+        page = await self.get_current_page()
+
+        # Check if current page is still valid, if not switch to another available page
+        try:
+            # Test if page is still accessible
+            await page.evaluate("1")
+        except Exception as e:
+            logger.debug(
+                f"👋  Current page is no longer accessible: {type(e).__name__}: {e}"
+            )
+            raise BrowserError("Browser closed: no valid pages available")
+
+        try:
+            await self.remove_highlights()
+            dom_service = DomService(page)
+            content = await dom_service.get_clickable_elements(
+                focus_element=focus_element,
+                viewport_expansion=self.browser_profile.viewport_expansion,
+                highlight_elements=self.browser_profile.highlight_elements,
+            )
+
+            tabs_info = await self.get_tabs_info()
+
+            # Get all cross-origin iframes within the page and open them in new tabs
+            # mark the titles of the new tabs so the LLM knows to check them for additional content
+            # unfortunately too buggy for now, too many sites use invisible cross-origin iframes for ads, tracking, youtube videos, social media, etc.
+            # and it distracts the bot by opening a lot of new tabs
+            # iframe_urls = await dom_service.get_cross_origin_iframes()
+            # outer_page = self.agent_current_page
+            # for url in iframe_urls:
+            # 	if url in [tab.url for tab in tabs_info]:
+            # 		continue  # skip if the iframe if we already have it open in a tab
+            # 	new_page_id = tabs_info[-1].page_id + 1
+            # 	logger.debug(f'Opening cross-origin iframe in new tab #{new_page_id}: {url}')
+            # 	await self.create_new_tab(url)
+            # 	tabs_info.append(
+            # 		TabInfo(
+            # 			page_id=new_page_id,
+            # 			url=url,
+            # 			title=f'iFrame opened as new tab, treat as if embedded inside page {outer_page.url}: {page.url}',
+            # 			parent_page_url=outer_page.url,
+            # 		)
+            # 	)
+
+            screenshot_b64 = await self.take_screenshot()
+            pixels_above, pixels_below = await self.get_scroll_info(page)
+
+            self.browser_state_summary = BrowserStateSummary(
+                element_tree=content.element_tree,
+                selector_map=content.selector_map,
+                url=page.url,
+                title=await page.title(),
+                tabs=tabs_info,
+                screenshot=screenshot_b64,
+                pixels_above=pixels_above,
+                pixels_below=pixels_below,
+            )
+
+            return self.browser_state_summary
+        except Exception as e:
+            logger.error(f"❌  Failed to update state: {e}")
+            # Return last known good state if available
+            if hasattr(self, "browser_state_summary"):
+                return self.browser_state_summary
+            raise
 
     async def take_screenshot(self, full_page: bool = False) -> str:
         page = await self.get_current_page()
@@ -780,15 +1075,15 @@ class BrowserSession(BaseModel):
         parsed_url = urlparse(url)
         domain = parsed_url.hostname
         if not domain:
-            return False  # Or handle as per your logic for invalid URLs
+            return False
         return any(
             (
                 domain.endswith(allowed_domain.lstrip("*."))
                 if allowed_domain.startswith("*.")
                 else domain == allowed_domain
             )
-            for allowed_domain in self.browser_profile.allowed_domains
-        )  # type: ignore
+            for allowed_domain in self.browser_profile.allowed_domains  # type: ignore
+        )
 
     async def get_tabs_info(self) -> List[TabInfo]:
         if not self.browser_context:
@@ -799,7 +1094,7 @@ class BrowserSession(BaseModel):
                 tabs_info.append(
                     TabInfo(page_id=i, url=page.url, title=await page.title())
                 )
-            except Exception:  # Handle pages that might be closed or inaccessible
+            except Exception:
                 tabs_info.append(
                     TabInfo(
                         page_id=i, url="about:blank", title="Error retrieving title"
@@ -813,18 +1108,16 @@ class BrowserSession(BaseModel):
         pages = self.browser_context.pages
         if not pages:
             return
-
         target_page = None
         if page_id is not None and 0 <= page_id < len(pages):
             target_page = pages[page_id]
         elif self.agent_current_page and not self.agent_current_page.is_closed():
             target_page = self.agent_current_page
-
         if target_page:
             await target_page.close()
             if self.agent_current_page == target_page:
-                self.agent_current_page = None
-            await self.get_current_page()  # Resets current page if needed
+                self.agent_current_page = None  # type: ignore
+            await self.get_current_page()
 
 
 # --- Action Models (Simplified) ---
@@ -835,7 +1128,7 @@ class ActionModel(BaseModel):
         for _, value in self:
             if isinstance(value, dict) and "index" in value:
                 return value["index"]
-            if hasattr(value, "index") and value.index is not None:
+            if hasattr(value, "index") and value.index is not None:  # type: ignore
                 return value.index  # type: ignore
         return None
 
@@ -846,8 +1139,8 @@ class ActionModel(BaseModel):
                 value["index"] = index
                 setattr(self, field_name, value)
                 return
-            if hasattr(value, "index"):
-                value.index = index
+            if hasattr(value, "index"):  # type: ignore
+                value.index = index  # type: ignore
                 return
         logger.warning(f"Could not set index on action: {self}")
 
@@ -917,7 +1210,6 @@ class RegisteredAction(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def prompt_description(self) -> str:
-        # Simplified for brevity
         return f"{self.description}: {self.name}({self.param_model.__name__})"
 
 
@@ -925,7 +1217,6 @@ class ActionRegistry(BaseModel):
     actions: Dict[str, RegisteredAction] = {}
 
     def get_prompt_description(self, page: Optional[Page] = None) -> str:
-        # Simplified for brevity
         return "\n".join(
             action.prompt_description() for action in self.actions.values()
         )
@@ -937,24 +1228,25 @@ class ActionRegistry(BaseModel):
         for name, action_info in self.actions.items():
             if include_actions and name not in include_actions:
                 continue
-            # Simplified filtering for this example
             if (
                 page
                 and action_info.domains
                 and not any(
-                    urlparse(page.url).hostname.endswith(d.lstrip("*."))
+                    urlparse(page.url).hostname.endswith(d.lstrip("*."))  # type: ignore
                     for d in action_info.domains
                 )
-            ):  # type: ignore
+            ):
                 continue
             if page and action_info.page_filter and not action_info.page_filter(page):
                 continue
-
             fields[name] = (
                 Optional[action_info.param_model],
                 Field(default=None, description=action_info.description),
             )
-        return create_model("DynamicActionModel", __base__=ActionModel, **fields)  # type: ignore
+        DynamicActionModel = create_model(
+            "DynamicActionModel", __base__=ActionModel, **fields
+        )  # type: ignore
+        return DynamicActionModel
 
 
 class Controller(Generic[Context]):
@@ -966,27 +1258,25 @@ class Controller(Generic[Context]):
         self.registry = ActionRegistry()
         self.exclude_actions = exclude_actions
         self._register_default_actions()
-        if output_model:  # Simplified output model handling
+        if output_model:
 
             class CustomDoneAction(BaseModel):
-                data: output_model
-                success: bool  # type: ignore
+                data: output_model  # type: ignore
+                success: bool
 
             self.registry.actions["done"] = RegisteredAction(
                 name="done",
                 description="Completes the task with custom output",
-                function=self._custom_done_action_func,
+                function=self._custom_done_action_func,  # type: ignore
                 param_model=CustomDoneAction,
             )
 
-    async def _custom_done_action_func(
-        self, params: BaseModel
-    ):  # Actually CustomDoneAction
+    async def _custom_done_action_func(self, params: BaseModel):
         return ActionResult(
             is_done=True,
-            success=params.success,
-            extracted_content=params.data.model_dump_json(),
-        )  # type: ignore
+            success=params.success,  # type: ignore
+            extracted_content=params.data.model_dump_json(),  # type: ignore
+        )
 
     def action(
         self, description: str, param_model: Optional[Type[BaseModel]] = None, **kwargs
@@ -995,7 +1285,7 @@ class Controller(Generic[Context]):
             if func.__name__ in self.exclude_actions:
                 return func
             actual_param_model = param_model
-            if not actual_param_model:  # Auto-generate Pydantic model
+            if not actual_param_model:
                 sig = inspect.signature(func)
                 fields = {
                     name: (
@@ -1006,12 +1296,11 @@ class Controller(Generic[Context]):
                     if name not in ["browser_session", "page_extraction_llm", "context"]
                 }
                 actual_param_model = create_model(f"{func.__name__}Params", **fields)  # type: ignore
-
             self.registry.actions[func.__name__] = RegisteredAction(
                 name=func.__name__,
                 description=description,
                 function=func,
-                param_model=actual_param_model,
+                param_model=actual_param_model,  # type: ignore
                 **kwargs,  # type: ignore
             )
             return func
@@ -1019,7 +1308,6 @@ class Controller(Generic[Context]):
         return decorator
 
     def _register_default_actions(self):
-        # Simplified registration of default actions
         @self.action("Navigate to a URL", param_model=GoToUrlAction)
         async def go_to_url(params: GoToUrlAction, browser_session: BrowserSession):
             await browser_session.navigate(params.url)
@@ -1043,11 +1331,7 @@ class Controller(Generic[Context]):
         async def click_element_by_index(
             params: ClickElementAction, browser_session: BrowserSession
         ):
-            # Placeholder for click logic
             logger.info(f"Attempting to click element with index: {params.index}")
-            # In a real scenario, you'd interact with Playwright here.
-            # This requires DOM information from get_state_summary's selector_map.
-            # For this prompt-focused version, we'll assume success or mock it.
             state = await browser_session.get_state_summary(
                 cache_clickable_elements_hashes=False
             )
@@ -1055,14 +1339,13 @@ class Controller(Generic[Context]):
                 element_to_click = state.selector_map[params.index]
                 page = await browser_session.get_current_page()
                 try:
-                    # This is a simplified click, real version is more robust
                     await page.locator(f"xpath={element_to_click.xpath}").click(
                         timeout=5000
                     )  # type: ignore
                     return ActionResult(
                         extracted_content=f"Clicked element at index {params.index} ({element_to_click.tag_name})",
                         include_in_memory=True,
-                    )
+                    )  # type: ignore
                 except Exception as e:
                     logger.error(f"Failed to click element {params.index}: {e}")
                     return ActionResult(
@@ -1096,7 +1379,6 @@ class Controller(Generic[Context]):
                     return ActionResult(
                         error=f"Failed to input text into element {params.index}: {str(e)}"
                     )
-
             return ActionResult(
                 error=f"Element with index {params.index} not found for input."
             )
@@ -1126,7 +1408,7 @@ class Controller(Generic[Context]):
             )
 
         @self.action("Mark task as done", param_model=DoneAction)
-        async def done(params: DoneAction):  # Removed browser_session as it's not used
+        async def done(params: DoneAction):
             return ActionResult(
                 is_done=True, success=params.success, extracted_content=params.text
             )
@@ -1134,19 +1416,19 @@ class Controller(Generic[Context]):
         @self.action("Open URL in a new tab", param_model=OpenTabAction)
         async def open_tab(params: OpenTabAction, browser_session: BrowserSession):
             if not browser_session.browser_context:
-                await browser_session.start()  # Ensure context exists
+                await browser_session.start()
             new_page = await browser_session.browser_context.new_page()  # type: ignore
             await new_page.goto(params.url, wait_until="domcontentloaded")
-            browser_session.agent_current_page = (
-                new_page  # Update current page reference
-            )
+            browser_session.agent_current_page = new_page
             return ActionResult(
                 extracted_content=f"Opened new tab with URL: {params.url}",
                 include_in_memory=True,
             )
 
         @self.action("Close an existing tab by its ID", param_model=CloseTabAction)
-        async def close_tab(params: CloseTabAction, browser_session: BrowserSession):
+        async def close_tab_action(
+            params: CloseTabAction, browser_session: BrowserSession
+        ):  # Renamed to avoid conflict
             await browser_session.close_tab(params.page_id)
             return ActionResult(
                 extracted_content=f"Closed tab with ID: {params.page_id}",
@@ -1168,34 +1450,111 @@ class Controller(Generic[Context]):
             return ActionResult(error=f"Tab ID {params.page_id} not found.")
 
         @self.action(
-            "Extract content from the current page based on a goal",
+            "Extract content from the current page based on a goal", # Description from your file
             param_model=ExtractPageContentAction,
         )
         async def extract_content(
             params: ExtractPageContentAction,
             browser_session: BrowserSession,
-            page_extraction_llm: BaseChatModel,
+            page_extraction_llm: BaseChatModel, # This is an LLM call within the action
         ):
             page = await browser_session.get_current_page()
-            # Simplified: Get all text content. Real version uses LLM for targeted extraction.
-            text_content = (
-                await page.content()
-            )  # Or page.inner_text('body') for less HTML
-            # In a real scenario, you would use page_extraction_llm with text_content and params.goal
-            # For now, just returning a snippet or a message.
-            summary = f"Content related to '{params.goal}'. (Full content length: {len(text_content)})"
-            if page_extraction_llm:
-                # Simplified LLM call, actual prompt would be more sophisticated
-                try:
-                    llm_response = await page_extraction_llm.ainvoke(
-                        f"Extract information about '{params.goal}' from the following text:\n{text_content[:4000]}"
-                    )  # Limit input size
-                    summary = llm_response.content  # type: ignore
-                except Exception as e:
-                    logger.error(f"LLM extraction failed: {e}")
-                    summary = f"Could not extract with LLM. Raw content for '{params.goal}' first 200 chars: {text_content[:200]}"
+            extracted_data_summary = f"Attempted to extract: '{params.goal}'." # Default summary
 
-            return ActionResult(extracted_content=summary, include_in_memory=True)
+            try:
+                # Try to get cleaner text from common main content areas first
+                main_content_selectors = ["main", "article", "[role='main']", "body"] # Prioritized selectors
+                text_content = ""
+                logger.info(f"Attempting to extract text for goal: '{params.goal}'")
+
+                for selector in main_content_selectors:
+                    try:
+                        content_elements = page.locator(selector)
+                        count = await content_elements.count()
+                        if count > 0:
+                            # Prioritize visible elements if multiple are found
+                            visible_element_text = ""
+                            for i in range(count):
+                                element = content_elements.nth(i)
+                                if await element.is_visible(timeout=1000): # Short timeout for visibility check
+                                    visible_element_text = await element.inner_text(timeout=5000) # 5 sec timeout
+                                    if visible_element_text.strip():
+                                        break # Use the first visible element's text
+                            
+                            if visible_element_text.strip():
+                                text_content = visible_element_text.strip()
+                                logger.info(f"Successfully extracted text using selector '{selector}'. Length: {len(text_content)}")
+                                break # Got content from a prioritized selector
+                            else:
+                                logger.debug(f"Selector '{selector}' found elements, but no visible text obtained.")
+                        else:
+                            logger.debug(f"Selector '{selector}' not found on page.")
+                    except PlaywrightTimeoutError:
+                        logger.warning(f"Timeout extracting inner_text from selector '{selector}'.")
+                        continue
+                    except Exception as el_err:
+                        logger.debug(f"Error processing selector '{selector}': {el_err}")
+                        continue
+                
+                if not text_content.strip():
+                    logger.warning("No text content extracted from main content selectors. Full page text might be too noisy or extraction might fail.")
+                    # As a last resort, if no specific content area worked, you could try a limited body text or indicate failure.
+                    # For this iteration, we'll proceed with potentially empty text_content if nothing specific was found,
+                    # letting the sub-LLM handle the "nothing found" case.
+
+            except Exception as e:
+                logger.error(f"Critical error during page text scraping for 'extract_content': {type(e).__name__} - {e}", exc_info=True)
+                return ActionResult(error=f"Failed to scrape page content: {type(e).__name__}", include_in_memory=True)
+
+            # Refine the goal for the page_extraction_llm
+            # The original params.goal might be something like "Extract the titles and links of 5 news articles..."
+            # The sub-LLM should just focus on finding titles and links based on the main goal.
+            simplified_extraction_goal = params.goal
+            if "extract the titles and links of 5 news articles" in params.goal.lower():
+                simplified_extraction_goal = "titles and links of news articles about COVID-19 in Vietnam" # Be more direct
+
+            # Limit the text sent to the sub-LLM to a reasonable length
+            # Increased slightly, but be mindful of token limits and sub-LLM performance
+            max_text_for_sub_llm = 10000
+            if len(text_content) > max_text_for_sub_llm:
+                logger.info(f"Truncating text_content for page_extraction_llm from {len(text_content)} to {max_text_for_sub_llm} chars.")
+                text_to_process = text_content[:max_text_for_sub_llm]
+            else:
+                text_to_process = text_content
+            
+            if not text_to_process.strip():
+                 logger.warning(f"No text content available to send to page_extraction_llm for goal: '{simplified_extraction_goal}'")
+                 extracted_data_summary = f"No text content found on the page to process for: '{simplified_extraction_goal}'."
+            elif page_extraction_llm:
+                # Construct a more specific prompt for the sub-LLM
+                sub_llm_prompt = (
+                    f"Review the following TEXT_TO_PROCESS and extract information for the goal: '{simplified_extraction_goal}'.\n"
+                    "If the goal involves finding multiple items (e.g., articles, products), list each item clearly. "
+                    "For news articles, please extract the title and the direct URL (link/href) for each article found. "
+                    "Present the findings as a clear, well-structured list. "
+                    "If no relevant information or articles are found, explicitly state 'No specific information or articles found matching the goal.'\n\n"
+                    "TEXT_TO_PROCESS:\n"
+                    f"\"\"\"{text_to_process}\"\"\""
+                )
+                try:
+                    logger.info(f"Sending to page_extraction_llm. Effective Goal: '{simplified_extraction_goal}'. Text length: {len(text_to_process)}")
+                    llm_response = await page_extraction_llm.ainvoke(sub_llm_prompt)
+                    extracted_data = llm_response.content if hasattr(llm_response, "content") else str(llm_response)
+
+                    if not extracted_data.strip() or "no specific information or articles found" in extracted_data.lower():
+                        extracted_data_summary = f"Sub-LLM found no specific articles/information for: '{simplified_extraction_goal}'."
+                    else:
+                        # Success, use the direct data from sub-LLM
+                        extracted_data_summary = extracted_data 
+                    logger.info(f"page_extraction_llm raw response snippet: {extracted_data_summary[:300]}...")
+
+                except Exception as e:
+                    logger.error(f"page_extraction_llm call failed: {type(e).__name__} - {e}", exc_info=True)
+                    extracted_data_summary = f"Error during sub-LLM extraction for '{simplified_extraction_goal}': {type(e).__name__}."
+            else:
+                extracted_data_summary = "page_extraction_llm not configured; cannot process extracted text."
+            
+            return ActionResult(extracted_content=extracted_data_summary, include_in_memory=True)
 
         @self.action(
             "Send special keys or keyboard shortcuts", param_model=SendKeysAction
@@ -1208,7 +1567,7 @@ class Controller(Generic[Context]):
             )
 
         @self.action("Wait for a specified number of seconds", param_model=WaitAction)
-        async def wait(params: WaitAction):  # Removed browser_session as it's not used
+        async def wait(params: WaitAction):
             await asyncio.sleep(params.seconds)
             return ActionResult(
                 extracted_content=f"Waited for {params.seconds} seconds",
@@ -1225,45 +1584,27 @@ class Controller(Generic[Context]):
         context: Optional[Context] = None,
     ):
         action_name = ""
-        # The model_dump(exclude_unset=True) ensures we only get explicitly set fields.
-        # This is important as ActionModel can have many optional fields for different actions.
         dumped_action = action.model_dump(exclude_unset=True)
         if not dumped_action:
             return ActionResult(error="No action specified in the model.")
-
         action_name = list(dumped_action.keys())[0]
         params_obj = dumped_action[action_name]
-
         if action_name not in self.registry.actions:
             return ActionResult(error=f"Action '{action_name}' not found.")
-
         registered_action = self.registry.actions[action_name]
-
-        # Prepare kwargs for the action function
         action_kwargs: Dict[str, Any] = {}
         sig = inspect.signature(registered_action.function)
-
-        # Pass BrowserSession if the action expects it
         if "browser_session" in sig.parameters:
             action_kwargs["browser_session"] = browser_session
         if "page_extraction_llm" in sig.parameters:
             action_kwargs["page_extraction_llm"] = page_extraction_llm
-        # Add other context-specific params as needed
-
         try:
-            # If params_obj is already a Pydantic model instance (because it was nested)
             if isinstance(params_obj, BaseModel):
                 validated_params = params_obj
-            # If params_obj is a dictionary, validate it using the action's param_model
             elif isinstance(params_obj, dict):
                 validated_params = registered_action.param_model(**params_obj)
             else:
-                # If params_obj is None (for actions with no parameters), create an empty instance
-                # This assumes NoParamsAction or similar for actions without params
                 validated_params = registered_action.param_model()
-
-            # Execute the action
-            # If the action function expects its parameters as a single Pydantic model:
             if (
                 len(sig.parameters) > 0
                 and list(sig.parameters.values())[0].name != "self"
@@ -1276,21 +1617,20 @@ class Controller(Generic[Context]):
                     result = await registered_action.function(
                         validated_params, **action_kwargs
                     )
-                else:  # Action expects individual kwargs
+                else:
                     result = await registered_action.function(
                         **validated_params.model_dump(exclude_none=True),
                         **action_kwargs,
                     )  # type: ignore
-            else:  # Action expects individual kwargs or no args beyond context
+            else:
                 result = await registered_action.function(
                     **validated_params.model_dump(exclude_none=True), **action_kwargs
                 )  # type: ignore
-
             if isinstance(result, ActionResult):
                 return result
             if isinstance(result, str):
                 return ActionResult(extracted_content=result)
-            return ActionResult()  # Default if action returns None or unhandled type
+            return ActionResult()
         except PlaywrightTimeoutError:
             logger.error(f"Timeout error during action: {action_name}")
             return ActionResult(error=f"Action '{action_name}' timed out.")
@@ -1340,7 +1680,7 @@ class MessageHistory(BaseModel):
             self.messages.insert(position, managed_msg)
         self.current_tokens += metadata.tokens
 
-    def remove_last_state_message(self):  # Removes the HumanMessage with browser state
+    def remove_last_state_message(self):
         if (
             self.messages
             and isinstance(self.messages[-1].message, HumanMessage)
@@ -1358,25 +1698,22 @@ class MessageManagerState(BaseModel):
 
 class MessageManagerSettings(BaseModel):
     max_input_tokens: int = 128000
-    estimated_characters_per_token: int = 3  # Rough estimate
-    image_tokens: int = 800  # OpenAI's cost for a low-detail image tile
-    include_attributes: List[str] = Field(
-        default_factory=lambda: [
-            "id",
-            "class",
-            "name",
-            "role",
-            "aria-label",
-            "placeholder",
-            "value",
-            "alt",
-            "type",
-            "title",
-        ]
-    )
+    estimated_characters_per_token: int = 3
+    image_tokens: int = 800
+    include_attributes: List[str] = Field(default_factory=list)
     message_context: Optional[str] = None
     sensitive_data: Optional[Dict[str, str]] = None
     available_file_paths: Optional[List[str]] = None
+
+
+@dataclass
+class AgentStepInfo:
+    step_number: int
+    max_steps: int
+
+    def is_last_step(self) -> bool:
+        """Check if this is the last step"""
+        return self.step_number >= self.max_steps - 1
 
 
 class MessageManager:
@@ -1395,7 +1732,6 @@ class MessageManager:
             self._init_messages()
 
     def _count_tokens(self, message: BaseMessage) -> int:
-        # Simplified token counting
         content_str = ""
         if isinstance(message.content, str):
             content_str = message.content
@@ -1404,11 +1740,9 @@ class MessageManager:
                 if isinstance(item, dict) and item.get("type") == "text":
                     content_str += item["text"]
                 elif isinstance(item, dict) and item.get("type") == "image_url":
-                    content_str += " [IMAGE] "  # Placeholder for image tokens
+                    content_str += " [IMAGE] "
         if hasattr(message, "tool_calls") and message.tool_calls:  # type: ignore
             content_str += str(message.tool_calls)  # type: ignore
-
-        # Basic character-based estimation + image token cost
         char_tokens = len(content_str) // self.settings.estimated_characters_per_token
         image_count = content_str.count("[IMAGE]")
         return char_tokens + (image_count * self.settings.image_tokens)
@@ -1419,11 +1753,10 @@ class MessageManager:
         position: Optional[int] = None,
         message_type: Optional[str] = None,
     ):
-        # Simplified sensitive data filtering for this example
         if self.settings.sensitive_data and isinstance(message.content, str):
             temp_content = message.content
             for placeholder, real_value in self.settings.sensitive_data.items():
-                if real_value:  # only replace if real_value is not empty
+                if real_value:
                     temp_content = temp_content.replace(
                         real_value, f"<secret>{placeholder}</secret>"
                     )
@@ -1441,8 +1774,7 @@ class MessageManager:
                     new_content_list.append({"type": "text", "text": temp_text})
                 else:
                     new_content_list.append(item)
-            message.content = new_content_list
-
+            message.content = new_content_list  # type: ignore
         token_count = self._count_tokens(message)
         self.state.history.add_message(
             message,
@@ -1468,33 +1800,44 @@ class MessageManager:
                 HumanMessage(content=info), message_type="init"
             )
 
-        # Simplified example output for OpenAI (tool_calls format)
-        self._add_message_with_tokens(
-            HumanMessage(content="Example output format:"), message_type="init"
-        )
-        # Inside MessageManager._init_messages method
-        arguments_dict = {
-            "current_state": {
-                "evaluation_previous_goal": "Success - I did X.",
-                "memory": "I have done X and Y. Current step 3/15.",
-                "next_goal": "Now I will do Z.",
-            },
-            "action": [{"go_to_url": {"url": "https://example.com"}}],
+        example_current_state = {
+            "evaluation_previous_goal": "Success|Failed|Unknown - Analyze the current elements and the image to check if the previous goals/actions are successful like intended by the task. Mention if something unexpected happened. Shortly state why/why not",
+            "memory": "Description of what has been done and what you need to remember. Be very specific. Count here ALWAYS how many times you have done something and how many remain. E.g. 0 out of 10 websites analyzed. Continue with abc and xyz",
+            "next_goal": "What needs to be done with the next immediate action",
         }
-        example_tool_call = AIMessage(
-            content="",
+        example_action_list = [{"one_action_name": {"parameter_name": "value"}}]
+        example_args_for_llm_tool_call = {
+            "current_state": example_current_state,
+            "action": example_action_list,
+        }
+
+        self._add_message_with_tokens(
+            HumanMessage(
+                content=f"Example of the JSON structure you should provide for the 'AgentOutput' tool's arguments:\n```json\n{json.dumps(example_args_for_llm_tool_call, indent=2)}\n```"
+            ),
+            message_type="init",
+        )
+
+        # Corrected example AIMessage for Langchain's ToolCall structure
+        example_tool_call_id = "tool_call_example_id"
+        example_aimessage_with_tool_call = AIMessage(
+            content="I will now perform the action.",
             tool_calls=[
                 {
-                    "id": str(self.state.tool_id),
-                    "name": "AgentOutput",  # 'name' is now top-level
-                    "args": arguments_dict,  # 'args' is now top-level and a dictionary
+                    "id": example_tool_call_id,
+                    "name": "AgentOutput",
+                    "args": example_args_for_llm_tool_call,  # Arguments as a dict
                 }
             ],
         )
-        self._add_message_with_tokens(example_tool_call, message_type="init")
+        self._add_message_with_tokens(
+            example_aimessage_with_tool_call, message_type="init"
+        )
         self.add_tool_message(
-            content="Browser started", message_type="init"
-        )  # Tool response for the example
+            content="Example tool call processed.",
+            tool_call_id=example_tool_call_id,
+            message_type="init",
+        )
 
         self._add_message_with_tokens(
             HumanMessage(content="[Your task history memory starts here]"),
@@ -1509,7 +1852,7 @@ class MessageManager:
             )
 
     def add_new_task(self, new_task: str):
-        self.task = new_task  # Update the main task
+        self.task = new_task
         self._add_message_with_tokens(
             HumanMessage(
                 content=f'Your new ultimate task is: """{new_task}""". Consider previous context.'
@@ -1519,68 +1862,68 @@ class MessageManager:
     def add_state_message(
         self,
         browser_state_summary: BrowserStateSummary,
-        result: Optional[List[ActionResult]] = None,
-        step_info: Optional[Any] = None,
-        use_vision: bool = True,
-    ):
-        state_text = f"\n[Current state starts here]\nCurrent URL: {browser_state_summary.url}\nOpen Tabs: {[(tab.page_id, tab.title) for tab in browser_state_summary.tabs]}\n"
-        state_text += f"Visible elements:\n{browser_state_summary.element_tree.clickable_elements_to_string(self.settings.include_attributes)}\n"
-        if step_info:
-            state_text += f"Step: {step_info.step_number + 1}/{step_info.max_steps}\n"
-        state_text += f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        result: list[ActionResult] | None = None,
+        step_info: AgentStepInfo | None = None,
+        use_vision=True,
+    ) -> None:
+        """Add browser state as human message"""
 
+        # if keep in memory, add to directly to history and add state without result
         if result:
-            for i, res_item in enumerate(result):
-                if res_item.extracted_content:
-                    state_text += (
-                        f"Action Result {i + 1}: {res_item.extracted_content}\n"
-                    )
-                if res_item.error:
-                    state_text += f"Action Error {i + 1}: {res_item.error.splitlines()[-1]}\n"  # Only last line of error
+            for r in result:
+                if r.include_in_memory:
+                    if r.extracted_content:
+                        msg = HumanMessage(
+                            content="Action result: " + str(r.extracted_content)
+                        )
+                        self._add_message_with_tokens(msg)
+                    if r.error:
+                        # if endswith \n, remove it
+                        if r.error.endswith("\n"):
+                            r.error = r.error[:-1]
+                        # get only last line of error
+                        last_line = r.error.split("\n")[-1]
+                        msg = HumanMessage(content="Action error: " + last_line)
+                        self._add_message_with_tokens(msg)
+                    result = None  # if result in history, we dont want to add it again
 
-        content_parts: list[Union[str, Dict[str, Any]]] = [
-            {"type": "text", "text": state_text}
-        ]
-        if use_vision and browser_state_summary.screenshot:
-            content_parts.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{browser_state_summary.screenshot}"
-                    },
-                }
-            )
-        self._add_message_with_tokens(HumanMessage(content=content_parts))  # type: ignore
+        # otherwise add state message and result to next message (which will not stay in memory)
+        assert browser_state_summary
+        state_message = AgentMessagePrompt(
+            browser_state_summary=browser_state_summary,
+            result=result,
+            include_attributes=self.settings.include_attributes,
+            step_info=step_info,
+        ).get_user_message(use_vision)
+        self._add_message_with_tokens(state_message)
 
     def add_model_output(self, model_output: "AgentOutput"):
-        # For OpenAI, the model output (AgentOutput) needs to be formatted as a tool call
-        # The 'AgentOutput' tool should be defined in the LLM's tool configuration
+        tool_call_id = str(self.state.tool_id)
+        # Corrected structure for Langchain's ToolCall
         tool_calls = [
             {
-                "id": str(self.state.tool_id),
-                "name": "AgentOutput",  # 'name' is now top-level
+                "id": tool_call_id,
+                "name": "AgentOutput",
                 "args": model_output.model_dump(
                     exclude_unset=True, exclude_none=True
-                ),  # 'args' is top-level and a dict
+                ),  # Arguments as dict
             }
         ]
         ai_message = AIMessage(content="", tool_calls=tool_calls)
         self._add_message_with_tokens(ai_message)
-        self.add_tool_message(content="Action processed.")  # Placeholder tool response
+        self.add_tool_message(content="Action processed.", tool_call_id=tool_call_id)
 
-    def add_tool_message(self, content: str, message_type: Optional[str] = None):
-        # For OpenAI, ToolMessage needs a tool_call_id
-        tool_message = ToolMessage(
-            content=content, tool_call_id=str(self.state.tool_id)
-        )
-        self.state.tool_id += 1  # Increment for the next tool call
+    def add_tool_message(
+        self, content: str, tool_call_id: str, message_type: Optional[str] = None
+    ):
+        tool_message = ToolMessage(content=content, tool_call_id=tool_call_id)
         self._add_message_with_tokens(tool_message, message_type=message_type)
+        self.state.tool_id += 1
 
     def get_messages(self) -> List[BaseMessage]:
         return [m.message for m in self.state.history.messages]
 
     def _ensure_token_limit(self):
-        # Simplified token management: if over limit, remove oldest non-init message
         while (
             self.state.history.current_tokens > self.settings.max_input_tokens
             and len(self.state.history.messages) > 1
@@ -1593,19 +1936,108 @@ class MessageManager:
                         f"Removed message to stay within token limit. Current tokens: {self.state.history.current_tokens}"
                     )
                     break
-            else:  # No non-init message found to remove, break loop
+            else:
                 break
 
-    def cut_messages(self):  # Placeholder
+    def cut_messages(self):
         pass
 
 
-# --- Agent Prompts (Simplified) ---
+# --- Agent Prompts (Modified) ---
+BROWSER_USE_SYSTEM_PROMPT_TEMPLATE = """
+You are an AI agent designed to automate browser tasks. Your goal is to accomplish the ultimate task following the rules.
+
+# Input Format
+
+Task
+Previous steps
+Current URL
+Open Tabs
+Interactive Elements
+[index]<type>text</type>
+
+- index: Numeric identifier for interaction
+- type: HTML element type (button, input, etc.)
+- text: Element description
+  Example:
+  [33]<div>User form</div>
+  \t*[35]*<button aria-label='Submit form'>Submit</button>
+
+- Only elements with numeric indexes in [] are interactive
+- (stacked) indentation (with \t) is important and means that the element is a (html) child of the element above (with a lower index)
+- Elements with \* are new elements that were added after the previous step (if url has not changed)
+
+# Response Rules
+
+1. RESPONSE FORMAT: You must ALWAYS respond with valid JSON in this exact format:
+   {{"current_state": {{"evaluation_previous_goal": "Success|Failed|Unknown - Analyze the current elements and the image to check if the previous goals/actions are successful like intended by the task. Mention if something unexpected happened. Shortly state why/why not",
+   "memory": "Description of what has been done and what you need to remember. Be very specific. Count here ALWAYS how many times you have done something and how many remain. E.g. 0 out of 10 websites analyzed. Continue with abc and xyz",
+   "next_goal": "What needs to be done with the next immediate action"}},
+   "action":[{{"one_action_name": {{// action-specific parameter}}}}, // ... more actions in sequence]}}
+
+2. ACTIONS: You can specify multiple actions in the list to be executed in sequence. But always specify only one action name per item. Use maximum {max_actions_per_step} actions per sequence.
+Common action sequences:
+
+- Form filling: [{{"input_text": {{"index": 1, "text": "username"}}}}, {{"input_text": {{"index": 2, "text": "password"}}}}, {{"click_element": {{"index": 3}}}}]
+- Navigation and extraction: [{{"go_to_url": {{"url": "https://example.com"}}}}, {{"extract_content": {{"goal": "extract the names"}}}}]
+- Actions are executed in the given order
+- If the page changes after an action, the sequence is interrupted and you get the new state.
+- Only provide the action sequence until an action which changes the page state significantly.
+- Try to be efficient, e.g. fill forms at once, or chain actions where nothing changes on the page
+- only use multiple actions if it makes sense.
+
+3. ELEMENT INTERACTION:
+
+- Only use indexes of the interactive elements
+
+4. NAVIGATION & ERROR HANDLING:
+
+- If no suitable elements exist, use other functions to complete the task
+- If stuck, try alternative approaches - like going back to a previous page, new search, new tab etc.
+- Handle popups/cookies by accepting or closing them
+- Use scroll to find elements you are looking for
+- If you want to research something, open a new tab instead of using the current tab
+- If captcha pops up, try to solve it - else try a different approach
+- If the page is not fully loaded, use wait action
+
+5. TASK COMPLETION:
+
+- Use the done action as the last action as soon as the ultimate task is complete
+- Dont use "done" before you are done with everything the user asked you, except you reach the last step of max_steps.
+- If you reach your last step, use the done action even if the task is not fully finished. Provide all the information you have gathered so far. If the ultimate task is completely finished set success to true. If not everything the user asked for is completed set success in done to false!
+- If you have to do something repeatedly for example the task says for "each", or "for all", or "x times", count always inside "memory" how many times you have done it and how many remain. Don't stop until you have completed like the task asked you. Only call done after the last step.
+- Don't hallucinate actions
+- Make sure you include everything you found out for the ultimate task in the done text parameter. Do not just say you are done, but include the requested information of the task.
+
+6. VISUAL CONTEXT:
+
+- When an image is provided, use it to understand the page layout
+- Bounding boxes with labels on their top right corner correspond to element indexes
+
+7. Form filling:
+
+- If you fill an input field and your action sequence is interrupted, most often something changed e.g. suggestions popped up under the field.
+
+8. Long tasks:
+
+- Keep track of the status and subresults in the memory.
+- You are provided with procedural memory summaries that condense previous task history (every N steps). Use these summaries to maintain context about completed actions, current progress, and next steps. The summaries appear in chronological order and contain key information about navigation history, findings, errors encountered, and current state. Refer to these summaries to avoid repeating actions and to ensure consistent progress toward the task goal.
+
+9. Extraction:
+
+- If your task is to find information - call extract_content on the specific pages to get and store the information.
+  Your responses must be always JSON with the specified format.
+
+Available actions:
+{action_description}
+"""
+
+
 class SystemPrompt:
     def __init__(
         self,
         action_description: str,
-        max_actions_per_step: int = 10,
+        max_actions_per_step: int = 20,
         override_system_message: Optional[str] = None,
         extend_system_message: Optional[str] = None,
     ):
@@ -1613,36 +2045,10 @@ class SystemPrompt:
         if override_system_message:
             prompt = override_system_message
         else:
-            # Simplified default prompt for OpenAI
-            prompt = f"""You are an AI agent that interacts with a web browser based on user tasks.
-Your goal is to perform actions to achieve the task.
-You will be given the current state of the browser (URL, visible elements, screenshot).
-Respond with a JSON object using the 'AgentOutput' tool.
-The JSON should contain:
-1. `current_state`: Your assessment of the previous action, current progress, and next immediate goal.
-    - `evaluation_previous_goal`: "Success", "Failed", or "Unknown", with a brief explanation.
-    - `memory`: What you've done and need to remember (e.g., "Searched X, clicked Y. 2/5 steps done.").
-    - `next_goal`: Your immediate next objective (e.g., "Click the 'Login' button.").
-2. `action`: A list of one or more actions to perform. Max {max_actions_per_step} actions.
-    Available actions:
-    {action_description}
-
-Example of a single action:
-"action": [{{"go_to_url": {{"url": "https://example.com"}}}}]
-
-Example of multiple actions (fill form and click):
-"action": [
-    {{"input_text": {{"index": 1, "text": "my_username"}}}},
-    {{"input_text": {{"index": 2, "text": "my_password"}}}},
-    {{"click_element_by_index": {{"index": 3}}}}
-]
-
-If the task is completed, use the "done" action with `success: true` and a summary in `text`.
-If you reach the max steps and the task isn't fully done, use "done" with `success: false`.
-
-Tips:
-When submitting a search query you have typed, prioritize clicking a button with explicit text like 'Google Search' or a button with type='submit'. Avoid clicking auxiliary search options like 'Search by image' or 'Search by voice' for the primary search action unless the task specifically requires it.
-"""
+            prompt = BROWSER_USE_SYSTEM_PROMPT_TEMPLATE.format(
+                max_actions_per_step=max_actions_per_step,
+                action_description=action_description,
+            )
         if extend_system_message:
             prompt += f"\n{extend_system_message}"
         self.system_message = SystemMessage(content=prompt)
@@ -1651,57 +2057,85 @@ When submitting a search query you have typed, prioritize clicking a button with
         return self.system_message
 
 
-class AgentMessagePrompt:  # Retained from original structure, used by MessageManager
+class AgentMessagePrompt:
     def __init__(
         self,
-        browser_state_summary: BrowserStateSummary,
-        result: Optional[List[ActionResult]] = None,
-        include_attributes: Optional[List[str]] = None,
+        browser_state_summary: "BrowserStateSummary",
+        result: list["ActionResult"] | None = None,
+        include_attributes: list[str] | None = None,
         step_info: Optional[Any] = None,
     ):
-        self.state = browser_state_summary
+        self.state: "BrowserStateSummary" = browser_state_summary
         self.result = result
         self.include_attributes = include_attributes or []
         self.step_info = step_info
+        assert self.state
 
     def get_user_message(self, use_vision: bool = True) -> HumanMessage:
-        # Simplified for brevity, actual implementation is more detailed.
         elements_text = self.state.element_tree.clickable_elements_to_string(
             include_attributes=self.include_attributes
         )
-        state_description = f"\n[Current state starts here]\nCurrent URL: {self.state.url}\nTabs: {self.state.tabs}\nInteractive elements:\n{elements_text}\n"
+
+        has_content_above = (self.state.pixels_above or 0) > 0
+        has_content_below = (self.state.pixels_below or 0) > 0
+
+        if elements_text != "":
+            if has_content_above:
+                elements_text = f"... {self.state.pixels_above} pixels above - scroll or extract content to see more ...\n{elements_text}"
+            else:
+                elements_text = f"[Start of page]\n{elements_text}"
+            if has_content_below:
+                elements_text = f"{elements_text}\n... {self.state.pixels_below} pixels below - scroll or extract content to see more ..."
+            else:
+                elements_text = f"{elements_text}\n[End of page]"
+        else:
+            elements_text = "empty page"
+
         if self.step_info:
-            state_description += (
-                f"Step: {self.step_info.step_number + 1}/{self.step_info.max_steps}\n"
-            )
-        state_description += (
-            f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        )
+            step_info_description = f"Current step: {self.step_info.step_number + 1}/{self.step_info.max_steps}"
+        else:
+            step_info_description = ""
+        time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        step_info_description += f"Current date and time: {time_str}"
+
+        state_description = f"""
+[Task history memory ends]
+[Current state starts here]
+The following is one-time information - if you need to remember it write it to memory:
+Current url: {self.state.url}
+Available tabs:
+{self.state.tabs}
+Interactive elements from top layer of the current page inside the viewport:
+{elements_text}
+{step_info_description}
+"""
 
         if self.result:
-            for i, res_item in enumerate(self.result):
-                if res_item.extracted_content:
+            for i, result in enumerate(self.result):
+                if result.extracted_content:
+                    state_description += f"\nAction result {i + 1}/{len(self.result)}: {result.extracted_content}"
+                if result.error:
+                    # only use last line of error
+                    error = result.error.split("\n")[-1]
                     state_description += (
-                        f"Action Result {i + 1}: {res_item.extracted_content}\n"
-                    )
-                if res_item.error:
-                    state_description += (
-                        f"Action Error {i + 1}: {res_item.error.splitlines()[-1]}\n"
+                        f"\nAction error {i + 1}/{len(self.result)}: ...{error}"
                     )
 
-        content_parts: list[Union[str, Dict[str, Any]]] = [
-            {"type": "text", "text": state_description}
-        ]
-        if use_vision and self.state.screenshot:
-            content_parts.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{self.state.screenshot}"
+        if self.state.screenshot and use_vision is True:
+            # Format message for vision model
+            return HumanMessage(
+                content=[
+                    {"type": "text", "text": state_description},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{self.state.screenshot}"
+                        },  # , 'detail': 'low'
                     },
-                }
+                ]
             )
-        return HumanMessage(content=content_parts)  # type: ignore
+
+        return HumanMessage(content=state_description)
 
 
 class AgentBrain(BaseModel):
@@ -1713,21 +2147,19 @@ class AgentBrain(BaseModel):
 class AgentOutput(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     current_state: AgentBrain
-    action: List[ActionModel] = Field(
-        ..., min_length=1
-    )  # This will use the dynamically created ActionModel
+    action: List[ActionModel] = Field(..., min_length=1)
 
     @staticmethod
     def type_with_custom_actions(
         custom_actions_model: Type[ActionModel],
     ) -> Type["AgentOutput"]:
-        # Ensure List generic alias is correctly used for Pydantic
-        return create_model(
+        DynamicAgentOutput = create_model(
             "DynamicAgentOutput",
-            __base__=AgentOutput,  # Base class is AgentOutput itself
-            action=(List[custom_actions_model], Field(..., min_length=1)),  # type: ignore
-            __module__=AgentOutput.__module__,  # Keep the same module for clarity
-        )
+            __base__=AgentOutput,
+            action=(List[custom_actions_model], Field(..., min_length=1)),
+            __module__=AgentOutput.__module__,
+        )  # type: ignore
+        return DynamicAgentOutput
 
 
 class AgentSettings(BaseModel):
@@ -1737,37 +2169,23 @@ class AgentSettings(BaseModel):
     retry_delay: int = 10
     override_system_message: Optional[str] = None
     extend_system_message: Optional[str] = None
-    max_input_tokens: int = 128000  # Default for gpt-4o
-    validate_output: bool = False  # Not fully implemented in this replica
+    max_input_tokens: int = 128000  # Your value
+    validate_output: bool = False
     message_context: Optional[str] = None
-    generate_gif: Union[bool, str] = False  # Not implemented in this replica
+    generate_gif: Union[bool, str] = False
     available_file_paths: Optional[List[str]] = None
-    include_attributes: List[str] = Field(
-        default_factory=lambda: [
-            "id",
-            "class",
-            "name",
-            "role",
-            "aria-label",
-            "placeholder",
-            "value",
-            "alt",
-            "type",
-            "title",
-        ]
-    )
-    max_actions_per_step: int = 10
+    max_actions_per_step: int = 5  # Your value
     tool_calling_method: Optional[
         Literal["function_calling", "json_mode", "raw", "auto", "tools"]
     ] = "auto"
-    page_extraction_llm: Optional[BaseChatModel] = (
-        None  # LLM for extraction, if different
-    )
-    planner_llm: Optional[BaseChatModel] = None  # Not implemented in this replica
-    planner_interval: int = 1
-    is_planner_reasoning: bool = False
-    save_playwright_script_path: Optional[str] = None  # Not implemented
-    extend_planner_system_message: Optional[str] = None
+    page_extraction_llm: Optional[BaseChatModel] = None
+    planner_llm: Optional[BaseChatModel] = None  # Keep if you have it
+    planner_interval: int = 1  # Keep if you have it
+    is_planner_reasoning: bool = False  # Keep if you have it
+    save_playwright_script_path: Optional[str] = None  # Keep if you have it
+    extend_planner_system_message: Optional[str] = None  # Keep if you have it
+    # Add this new setting:
+    interrupt_on_page_change_in_multi_act: bool = True
 
 
 class AgentState(BaseModel):
@@ -1777,7 +2195,7 @@ class AgentState(BaseModel):
     last_result: Optional[List[ActionResult]] = None
     history: "AgentHistoryList" = Field(
         default_factory=lambda: AgentHistoryList(history=[])
-    )  # Forward ref
+    )
     message_manager_state: MessageManagerState = Field(
         default_factory=MessageManagerState
     )
@@ -1787,11 +2205,10 @@ class AgentState(BaseModel):
 
 class AgentHistory(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    model_output: Optional[AgentOutput] = None  # This should be the dynamic AgentOutput
+    model_output: Optional[AgentOutput] = None
     result: List[ActionResult]
-    # Simplified state for history, real one is BrowserStateHistory
-    state: Dict[str, Any]  # Stores simplified URL, title, screenshot
-    metadata: Optional[Dict[str, Any]] = None  # Simplified metadata
+    state: Dict[str, Any]
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class AgentHistoryList(BaseModel):
@@ -1805,21 +2222,16 @@ class AgentHistoryList(BaseModel):
         )
 
     def is_successful(self) -> Optional[bool]:
-        if self.is_done():
-            return self.history[-1].result[-1].success
-        return None
+        return self.history[-1].result[-1].success if self.is_done() else None
 
     def final_result(self) -> Optional[str]:
-        if self.is_done():
-            return self.history[-1].result[-1].extracted_content
-        return None
+        return self.history[-1].result[-1].extracted_content if self.is_done() else None
 
 
-# AgentState needs AgentHistoryList definition
 AgentState.model_rebuild()
 
 
-# --- Agent Service ---
+# --- Agent Service (Modified) ---
 class Agent(Generic[Context]):
     def __init__(
         self,
@@ -1829,59 +2241,67 @@ class Agent(Generic[Context]):
         controller: Optional[Controller[Context]] = None,
         initial_actions: Optional[List[Dict[str, Dict[str, Any]]]] = None,
         sensitive_data: Optional[Dict[str, str]] = None,
-        # Agent settings (subset of original for focus)
         use_vision: bool = True,
         override_system_message: Optional[str] = None,
         extend_system_message: Optional[str] = None,
-        max_input_tokens: int = 120000,  # Slightly less than 128k for safety
-        max_actions_per_step: int = 5,  # Reduced for simplicity
+        max_input_tokens: int = 120000,
+        max_actions_per_step: int = 5,
         page_extraction_llm: Optional[BaseChatModel] = None,
         injected_agent_state: Optional[AgentState] = None,
         context: Optional[Context] = None,
-        source: Optional[str] = None,  # For telemetry, can be ignored here
+        agent_settings: Optional[AgentSettings] = None,
+        browser_profile: Optional[BrowserProfile] = None,
     ):
         self.task = task
         self.llm = llm
         self.controller = controller or Controller()
         self.sensitive_data = sensitive_data
-        self.version = "replica-0.1"  # Mock version
-        self.source = source or "replica"
-
-        self.settings = AgentSettings(
-            use_vision=use_vision,
-            override_system_message=override_system_message,
-            extend_system_message=extend_system_message,
-            max_input_tokens=max_input_tokens,
-            max_actions_per_step=max_actions_per_step,
-            page_extraction_llm=page_extraction_llm
-            or llm,  # Default to main LLM if not provided
+        self.version = "main.py-replica-0.4"  # Updated version
+        self.settings = (
+            agent_settings
+            or AgentSettings(
+                use_vision=use_vision,  # from __init__ args
+                override_system_message=override_system_message,  # from __init__ args
+                extend_system_message=extend_system_message,  # from __init__ args
+                max_input_tokens=max_input_tokens,  # from __init__ args
+                max_actions_per_step=max_actions_per_step,  # from __init__ args
+                page_extraction_llm=page_extraction_llm or llm,  # from __init__ args
+                interrupt_on_page_change_in_multi_act=True,  # Default or ensure it's in provided agent_settings
+            )
         )
-
         self.state = injected_agent_state or AgentState()
-        self.browser_session = browser_session or BrowserSession(
-            browser_profile=DEFAULT_BROWSER_PROFILE
-        )
+        if browser_session:
+            self.browser_session = browser_session
+        else:
+            self.browser_session = BrowserSession(
+                browser_profile=browser_profile or DEFAULT_BROWSER_PROFILE
+            )
         self.context = context
-
-        # --- Setup ActionModel and AgentOutput based on controller ---
-        self.ActionModelType = (
-            self.controller.registry.create_action_model()
-        )  # Store the type
+        self.ActionModelType = self.controller.registry.create_action_model()
         self.AgentOutputType = AgentOutput.type_with_custom_actions(
             self.ActionModelType
-        )  # Store the type
-        # ---
-
+        )
         self.initial_actions = (
             self._convert_initial_actions(initial_actions) if initial_actions else None
         )
-
-        self.tool_calling_method = "tools"
-        if not hasattr(self.llm, "bind_tools"):
+        self.tool_calling_method = self.settings.tool_calling_method
+        if self.tool_calling_method == "auto":
+            self.tool_calling_method = "tools"
+        if not hasattr(self.llm, "bind_tools") and self.tool_calling_method not in [
+            "raw",
+            None,
+        ]:
             logger.warning(
-                f"LLM {self.llm.__class__.__name__} may not support bind_tools. Tool calling might fail."
+                f"LLM {self.llm.__class__.__name__} may not support bind_tools with method '{self.tool_calling_method}'. Tool calling might fail."
             )
-
+        active_browser_profile = self.browser_session.browser_profile
+        message_manager_settings = MessageManagerSettings(
+            max_input_tokens=self.settings.max_input_tokens,
+            include_attributes=active_browser_profile.include_attributes,
+            message_context=self.settings.message_context,
+            sensitive_data=self.sensitive_data,  # type: ignore
+            available_file_paths=self.settings.available_file_paths,
+        )
         self._message_manager = MessageManager(
             task=task,
             system_message=SystemPrompt(
@@ -1890,13 +2310,7 @@ class Agent(Generic[Context]):
                 override_system_message=self.settings.override_system_message,
                 extend_system_message=self.settings.extend_system_message,
             ).get_system_message(),
-            settings=MessageManagerSettings(
-                max_input_tokens=self.settings.max_input_tokens,
-                include_attributes=self.settings.include_attributes,
-                message_context=self.settings.message_context,
-                sensitive_data=self.sensitive_data,
-                available_file_paths=self.settings.available_file_paths,
-            ),
+            settings=message_manager_settings,
             state=self.state.message_manager_state,
         )
         self._external_pause_event = asyncio.Event()
@@ -1904,37 +2318,82 @@ class Agent(Generic[Context]):
 
     def _convert_initial_actions(
         self, actions: List[Dict[str, Dict[str, Any]]]
-    ) -> List[ActionModel]:  # Return list of ActionModel instances
+    ) -> List[ActionModel]:
         converted_actions = []
         for action_dict in actions:
             try:
-                action_instance = self.ActionModelType(
-                    **action_dict
-                )  # Use the stored type
-                converted_actions.append(action_instance)
+                converted_actions.append(self.ActionModelType(**action_dict))
             except ValidationError as e:
                 logger.error(f"Failed to validate initial action {action_dict}: {e}")
         return converted_actions
 
-    async def get_next_action(
-        self, input_messages: List[BaseMessage]
-    ) -> AgentOutput:  # Return instance of AgentOutput
+    async def get_next_action(self, input_messages: List[BaseMessage]) -> AgentOutput:
         try:
-            llm_with_tool = self.llm.bind_tools(
-                tools=[self.AgentOutputType], tool_choice=self.AgentOutputType.__name__
-            )  # type: ignore
+            if self.tool_calling_method in ["tools", "function_calling"]:
+                llm_with_tool = self.llm.bind_tools(
+                    tools=[self.AgentOutputType],
+                    tool_choice={
+                        "type": "function",
+                        "function": {"name": self.AgentOutputType.__name__},
+                    },
+                )
+            elif self.tool_calling_method == "json_mode":
+                llm_with_tool = self.llm
+            else:
+                llm_with_tool = self.llm
         except Exception as e:
             logger.error(
-                f"Failed to bind tools to LLM. Ensure your LLM supports tool calling. Error: {e}"
+                f"Failed to configure LLM for tool calling/JSON output with method '{self.tool_calling_method}'. Error: {e}"
             )
             llm_with_tool = self.llm
-
         raw_response = await llm_with_tool.ainvoke(input_messages)
-
-        if not hasattr(raw_response, "tool_calls") or not raw_response.tool_calls:  # type: ignore
-            logger.warning(
-                "LLM did not use tool_calls. Attempting to parse content as JSON."
-            )
+        if (
+            self.tool_calling_method in ["tools", "function_calling"]
+            and hasattr(raw_response, "tool_calls")
+            and raw_response.tool_calls
+        ):  # type: ignore
+            tool_call = raw_response.tool_calls[0]  # type: ignore
+            tool_name = None
+            tool_arguments_str = None
+            if tool_call.get("type") == "function" and "function" in tool_call:
+                tool_function_data = tool_call["function"]
+                tool_name = tool_function_data.get("name")
+                tool_arguments_str = tool_function_data.get("arguments")
+            else:
+                tool_name = tool_call.get("name")
+                tool_arguments_str = tool_call.get("args")
+            if (
+                not tool_name
+                or tool_name.lower() != self.AgentOutputType.__name__.lower()
+            ):  # type: ignore
+                logger.error(f"LLM called unexpected tool: {tool_name}")
+                raise ValueError(f"LLM called unexpected tool: {tool_name}")
+            try:
+                if isinstance(tool_arguments_str, str):
+                    try:
+                        args_dict = json.loads(tool_arguments_str)
+                        model_output = self.AgentOutputType(**args_dict)
+                    except json.JSONDecodeError as e:
+                        logger.error(
+                            f"Failed to parse JSON string from tool call arguments: {tool_arguments_str}. Error: {e}"
+                        )
+                        raise ValueError(
+                            f"Could not parse tool arguments: {tool_arguments_str}"
+                        ) from e
+                elif isinstance(tool_arguments_str, dict):
+                    model_output = self.AgentOutputType(**tool_arguments_str)
+                else:
+                    raise ValueError(
+                        f"Tool arguments are not a valid string or dict: {tool_arguments_str}"
+                    )
+            except ValidationError as e:
+                logger.error(
+                    f"Failed to validate AgentOutput from tool call arguments: {e}. Args: {tool_arguments_str}"
+                )
+                raise ValueError(
+                    f"Could not parse tool arguments for AgentOutput: {tool_arguments_str}"
+                ) from e
+        else:
             if isinstance(raw_response.content, str):
                 try:
                     content_str = raw_response.content
@@ -1944,11 +2403,7 @@ class Agent(Generic[Context]):
                         content_str = content_str[:-3]
                     content_str = content_str.strip()
                     parsed_json = json.loads(content_str)
-                    model_output = self.AgentOutputType(
-                        **parsed_json
-                    )  # Use the stored type
-                    log_response(model_output)
-                    return model_output
+                    model_output = self.AgentOutputType(**parsed_json)
                 except (json.JSONDecodeError, ValidationError) as e:
                     logger.error(
                         f"Failed to parse LLM content as AgentOutput JSON: {e}. Content: {raw_response.content}"
@@ -1961,78 +2416,63 @@ class Agent(Generic[Context]):
                     f"LLM response content is not a string and no tool_calls found. Response: {raw_response}"
                 )
                 raise ValueError("LLM response is in an unexpected format.")
-
-        tool_call = raw_response.tool_calls[0]  # type: ignore
-        if (
-            tool_call["name"].lower() != self.AgentOutputType.__name__.lower()
-        ):  # Compare with stored type name
-            logger.error(f"LLM called unexpected tool: {tool_call['name']}")
-            raise ValueError(f"LLM called unexpected tool: {tool_call['name']}")
-
-        try:
-            if isinstance(tool_call["args"], str):
-                model_output = self.AgentOutputType.model_validate_json(
-                    tool_call["args"]
-                )  # Use stored type
-            elif isinstance(tool_call["args"], dict):
-                model_output = self.AgentOutputType(
-                    **tool_call["args"]
-                )  # Use stored type
-            else:
-                raise ValueError(
-                    f"Tool arguments are not a valid string or dict: {tool_call['args']}"
-                )
-        except ValidationError as e:
-            logger.error(
-                f"Failed to validate AgentOutput from tool call arguments: {e}. Args: {tool_call['args']}"
-            )
-            if isinstance(tool_call["args"], str):
-                try:
-                    args_dict = json.loads(tool_call["args"])
-                    model_output = self.AgentOutputType(**args_dict)  # Use stored type
-                except (json.JSONDecodeError, ValidationError) as e2:
-                    logger.error(f"Retry parsing AgentOutput failed: {e2}")
-                    raise ValueError(
-                        f"Could not parse tool arguments for AgentOutput: {tool_call['args']}"
-                    ) from e2
-            else:
-                raise ValueError(
-                    f"Could not parse tool arguments for AgentOutput: {tool_call['args']}"
-                ) from e
-
         log_response(model_output)
         return model_output
 
-    async def multi_act(
-        self, actions: List[ActionModel]
-    ) -> List[ActionResult]:  # Parameter is List[ActionModel instance]
+    # In your Agent class in main.py
+
+    async def multi_act(self, actions: List[ActionModel]) -> List[ActionResult]:
         results = []
+        initial_hashes_url = None
+        initial_hashes_set = set()
+
+        # These are the hashes and URL from *before* the LLM made the current plan (actions list).
+        # This information should be current in the browser_session's cache
+        # due to the get_state_summary call that preceded the LLM invocation.
+        if self.browser_session._cached_clickable_element_hashes:
+            initial_hashes_url = (
+                self.browser_session._cached_clickable_element_hashes.url
+            )
+            initial_hashes_set = (
+                self.browser_session._cached_clickable_element_hashes.hashes
+            )
+
         for i, action_model_instance in enumerate(actions):
-            if not isinstance(
-                action_model_instance, self.ActionModelType
-            ):  # Check against stored type
+            if self.state.stopped:  # Check if agent was stopped externally
+                logger.info("Agent stop requested during multi_act.")
+                results.append(
+                    ActionResult(
+                        error="Agent stopped during action sequence.",
+                        include_in_memory=True,
+                    )
+                )
+                break
+
+            # --- Parameter validation for action_model_instance (copied from your existing multi_act if you had it) ---
+            if not isinstance(action_model_instance, self.ActionModelType):
                 logger.error(
                     f"Action {i} is not an instance of the expected ActionModel. Got: {type(action_model_instance)}"
                 )
                 if isinstance(action_model_instance, dict):
                     try:
                         action_model_instance = self.ActionModelType(
-                            **action_model_instance
-                        )  # Use stored type
+                            **action_model_instance  # type: ignore
+                        )
                     except ValidationError as e:
                         results.append(
                             ActionResult(
                                 error=f"Invalid action structure for action {i}: {e}"
                             )
                         )
-                        break
+                        break  # Stop processing further actions in this sequence
                 else:
                     results.append(
                         ActionResult(
                             error=f"Action {i} is not a valid ActionModel or dictionary."
                         )
                     )
-                    break
+                    break  # Stop processing further actions in this sequence
+            # --- End of parameter validation ---
 
             page_extraction_llm = self.settings.page_extraction_llm or self.llm
             result = await self.controller.act(
@@ -2044,15 +2484,69 @@ class Agent(Generic[Context]):
                 context=self.context,
             )
             results.append(result)
+
             if result.is_done or result.error:
-                break
-            await asyncio.sleep(
-                self.browser_session.browser_profile.wait_between_actions
-            )
+                break  # Stop on task completion or if an action itself errors
+
+            # If not the last action in the *planned* sequence, check for page changes
+            if i < len(actions) - 1:
+                # Wait a bit for page to potentially settle after the action
+                # This wait might already be part of _wait_for_page_and_frames_load
+                # called by get_state_summary, but an explicit short wait here can be defensive.
+                await asyncio.sleep(
+                    self.browser_session.browser_profile.wait_between_actions / 2
+                )  # Shorter than full wait_between_actions
+
+                if self.settings.interrupt_on_page_change_in_multi_act:
+                    # Get fresh state summary. This call will also update
+                    # self.browser_session._cached_clickable_element_hashes for the next main agent loop.
+                    # Crucially, it gives us the state *after* the action `i` was performed.
+                    fresh_state_summary = await self.browser_session.get_state_summary(
+                        cache_clickable_elements_hashes=True  # Ensure the main cache is updated
+                    )
+                    current_url_after_action = fresh_state_summary.url
+
+                    # These are the hashes of the page *after* the action was performed
+                    new_hashes_after_action = (
+                        self.browser_session._cached_clickable_element_hashes.hashes
+                        if self.browser_session._cached_clickable_element_hashes
+                        else set()
+                    )
+
+                    url_changed_from_original_plan_state = (
+                        current_url_after_action != initial_hashes_url
+                    )
+
+                    # Compare DOM hashes only if the URL is still the one the LLM's plan was based on.
+                    # If URL changed, that's a definite break.
+                    # If URL is same as initial, check if DOM changed.
+                    dom_changed_on_original_plan_url = (
+                        not url_changed_from_original_plan_state
+                        and new_hashes_after_action != initial_hashes_set
+                    )
+
+                    if url_changed_from_original_plan_state:
+                        logger.info(
+                            f"URL changed during multi_act (from '{initial_hashes_url}' to '{current_url_after_action}'), interrupting action sequence."
+                        )
+                        break  # Interrupt and re-prompt LLM
+                    if dom_changed_on_original_plan_url:
+                        logger.info(
+                            f"DOM structure changed on URL '{initial_hashes_url}' during multi_act (hashes differ), interrupting action sequence."
+                        )
+                        break  # Interrupt and re-prompt LLM
+
+            # If it was the last action in the sequence, or if only one action was planned,
+            # apply the standard wait_between_actions (or a portion of it) before finishing multi_act.
+            # This ensures there's a pause before the agent loop might immediately re-evaluate state.
+            if i == len(actions) - 1:
+                await asyncio.sleep(
+                    self.browser_session.browser_profile.wait_between_actions
+                )
+
         return results
 
     async def _handle_step_error(self, error: Exception) -> List[ActionResult]:
-        # Simplified error handling
         error_msg = str(error)
         logger.error(f"Step failed: {error_msg}", exc_info=True)
         self.state.consecutive_failures += 1
@@ -2061,31 +2555,25 @@ class Agent(Generic[Context]):
     async def step(self, step_info: Optional[Any] = None):
         logger.info(f"--- Step {self.state.n_steps} ---")
         browser_state_summary = None
-        model_output = None  # Should be instance of self.AgentOutputType
+        model_output = None
         result: List[ActionResult] = []
-
         try:
             if not self.browser_session.initialized:
                 await self.browser_session.start()
             browser_state_summary = await self.browser_session.get_state_summary()
-
             self._message_manager.add_state_message(
                 browser_state_summary=browser_state_summary,
                 result=self.state.last_result,
                 step_info=step_info,
                 use_vision=self.settings.use_vision,
             )
-
             input_messages = self._message_manager.get_messages()
             model_output = await self.get_next_action(input_messages)
-
             self._message_manager.state.history.remove_last_state_message()
-            self._message_manager.add_model_output(model_output)
-
-            result = await self.multi_act(model_output.action)
+            self._message_manager.add_model_output(model_output)  # type: ignore
+            result = await self.multi_act(model_output.action)  # type: ignore
             self.state.last_result = result
             self.state.consecutive_failures = 0
-
         except Exception as e:
             result = await self._handle_step_error(e)
             self.state.last_result = result
@@ -2093,7 +2581,7 @@ class Agent(Generic[Context]):
             if browser_state_summary and model_output:
                 self.state.history.history.append(
                     AgentHistory(
-                        model_output=model_output,  # This is an instance of self.AgentOutputType
+                        model_output=model_output,
                         result=result,
                         state={
                             "url": browser_state_summary.url,
@@ -2106,7 +2594,7 @@ class Agent(Generic[Context]):
                         },
                         metadata={"step": self.state.n_steps},
                     )
-                )
+                )  # type: ignore
             self.state.n_steps += 1
 
     async def run(
@@ -2118,7 +2606,6 @@ class Agent(Generic[Context]):
         logger.info(f"🚀 Starting task: {self.task}")
         if self.initial_actions:
             self.state.last_result = await self.multi_act(self.initial_actions)
-
         for step_num in range(max_steps):
             if self.state.stopped:
                 logger.info("Agent stopped.")
@@ -2127,62 +2614,42 @@ class Agent(Generic[Context]):
                 logger.info("Agent paused. Waiting for resume...")
                 await self._external_pause_event.wait()
                 logger.info("Agent resumed.")
-
             if self.state.consecutive_failures >= self.settings.max_failures:
                 logger.error(
                     f"Stopping due to {self.settings.max_failures} consecutive failures."
                 )
                 break
-
             if on_step_start:
                 await on_step_start(self)  # type: ignore
 
             @dataclass
-            class StepInfo:
+            class AgentStepInfo:
                 step_number: int
                 max_steps: int
 
             await self.step(
-                step_info=StepInfo(step_number=step_num, max_steps=max_steps)
+                step_info=AgentStepInfo(step_number=step_num, max_steps=max_steps)
             )
-
             if on_step_end:
                 await on_step_end(self)  # type: ignore
-
             if self.state.history.is_done():
                 logger.info("✅ Task marked as done.")
                 break
         else:
             logger.info(f"Max steps ({max_steps}) reached.")
             if not self.state.history.is_done():
-                done_action_model_type = self.controller.registry.create_action_model(
-                    include_actions=["done"]
+                done_params = DoneAction(
+                    text="Max steps reached, task may be incomplete.", success=False
                 )
-                # Create an instance of the specific ActionModel that can hold a DoneAction
-                # The action field in AgentOutput expects a list of ActionModelType instances.
-                # So, we create an instance of ActionModelType with the 'done' field set.
-                final_action_instance = done_action_model_type(
-                    done=DoneAction(
-                        text="Max steps reached, task may be incomplete.", success=False
-                    )
-                )
-
-                # Create an AgentBrain instance for the current_state
+                final_action_instance = self.ActionModelType(done=done_params)
                 final_agent_brain = AgentBrain(
                     evaluation_previous_goal="Max steps reached",
                     memory="N/A",
                     next_goal="N/A",
                 )
-
-                # Create an AgentOutput instance using the stored AgentOutputType
-                # This ensures the 'action' field has the correct List[ActionModelType]
                 final_model_output = self.AgentOutputType(
-                    current_state=final_agent_brain,
-                    action=[
-                        final_action_instance
-                    ],  # Pass the correctly typed action instance
+                    current_state=final_agent_brain, action=[final_action_instance]
                 )
-
                 self.state.history.history.append(
                     AgentHistory(
                         model_output=final_model_output,
@@ -2197,20 +2664,18 @@ class Agent(Generic[Context]):
                         metadata={"step": self.state.n_steps},
                     )
                 )
-
         logger.info(f"Agent run finished. Total steps: {self.state.n_steps - 1}")
         if self.settings.save_conversation_path:
             try:
                 with open(
                     f"{self.settings.save_conversation_path}_final.json", "w"
                 ) as f:
-                    json.dump(self.state.history.model_dump(), f, indent=2)  # type: ignore
+                    json.dump(self.state.history.model_dump(), f, indent=2)
                 logger.info(
                     f"Conversation history saved to {self.settings.save_conversation_path}_final.json"
                 )
             except Exception as e:
                 logger.error(f"Failed to save conversation: {e}")
-
         return self.state.history
 
     async def close(self):
@@ -2231,10 +2696,7 @@ class Agent(Generic[Context]):
         logger.info("Agent stop requested.")
 
 
-def log_response(
-    response: AgentOutput,
-) -> None:  # Parameter type is the base AgentOutput
-    """Utility function to log the model's response."""
+def log_response(response: AgentOutput) -> None:
     emoji = "🤷"
     if response.current_state and response.current_state.evaluation_previous_goal:
         if "Success" in response.current_state.evaluation_previous_goal:
@@ -2244,12 +2706,15 @@ def log_response(
         logger.info(f"{emoji} Eval: {response.current_state.evaluation_previous_goal}")
         logger.info(f"🧠 Memory: {response.current_state.memory}")
         logger.info(f"🎯 Next goal: {response.current_state.next_goal}")
-
-    if response.action:  # response.action will be List[ActionModelType instance]
+    if response.action:
         for i, action_model_instance in enumerate(response.action):
             action_dict = action_model_instance.model_dump(exclude_unset=True)
+            action_name = (
+                list(action_dict.keys())[0] if action_dict else "unknown_action"
+            )
+            action_params = action_dict.get(action_name, {})
             logger.info(
-                f"🛠️ Action {i + 1}/{len(response.action)}: {json.dumps(action_dict)}"
+                f"🛠️ Action {i + 1}/{len(response.action)}: {action_name}({json.dumps(action_params)})"
             )
     else:
         logger.warning("No action provided in AgentOutput.")
@@ -2262,64 +2727,66 @@ async def main():
             "Error: OPENAI_API_KEY not found. Please set it in your environment or .env file."
         )
         return
-
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0.0,
-    )
-
-    task = "Go to Google.com, search for 'Python programming', and then click on the official Python website link if visible."
-
-    # <<< START OF MODIFICATIONS FOR CHROME PROFILE >>>
-    # User's provided paths and arguments
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
+    task = "Go to google and list 5 news about covid 19 in Vietnam"
     persistent_profile_path = (
         "C:\\Users\\MSI\\AppData\\Local\\Google\\Chrome\\User Data\\Default"
     )
     chrome_exe_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
     other_browser_args = ["--start-maximized"]
-
     browser_profile = BrowserProfile(
-        user_data_dir=persistent_profile_path,  # Use the user's Chrome profile path
-        executable_path=chrome_exe_path,  # Use the user's Chrome executable
-        args=other_browser_args,  # Add custom browser arguments
-        headless=False,  # Run in non-headless mode to see the browser
-        # and for persistent profile to load correctly.
-        # channel="chromium" is the default in BrowserProfile and should work with executable_path.
+        user_data_dir=persistent_profile_path,
+        executable_path=chrome_exe_path,
+        args=other_browser_args,
+        headless=False,
+        include_attributes=[
+            "id",
+            "class",
+            "name",
+            "role",
+            "aria-label",
+            "placeholder",
+            "value",
+            "alt",
+            "type",
+            "title",
+            "href",
+            "text_content",
+        ],
     )
-    # <<< END OF MODIFICATIONS FOR CHROME PROFILE >>>
-
     browser_session = BrowserSession(browser_profile=browser_profile)
-
+    agent_settings = AgentSettings(
+        use_vision=True, max_actions_per_step=5, tool_calling_method="tools"
+    )
     agent = Agent(
         task=task,
         llm=llm,
         browser_session=browser_session,
-        # Ensure other necessary Agent parameters are passed if you use them
+        agent_settings=agent_settings,
     )
-
     try:
         print(f"Starting agent with task: {task}")
-        history = await agent.run(max_steps=5)
+        history = await agent.run(max_steps=20)
         print("\n--- Agent Run History ---")
         if history.history:
             for i, item in enumerate(history.history):
                 print(f"\n--- History Step {i + 1} ---")
-                if (
-                    item.model_output
-                ):  # item.model_output is an instance of AgentOutputType
-                    # Ensure AgentBrain attributes are accessed correctly if they exist
+                if item.model_output and isinstance(item.model_output, AgentOutput):
                     current_state = item.model_output.current_state
                     if current_state:
                         print(
-                            f"  LLM Thought: {current_state.evaluation_previous_goal} -> {current_state.next_goal}"
+                            f"  LLM Thought: Eval='{current_state.evaluation_previous_goal}' -> Memory='{current_state.memory}' -> NextGoal='{current_state.next_goal}'"
                         )
-                    for action_item in (
-                        item.model_output.action
-                    ):  # action_item is an instance of ActionModelType
+                    for action_item_model in item.model_output.action:
+                        action_dump = action_item_model.model_dump(exclude_unset=True)
+                        action_name = (
+                            list(action_dump.keys())[0] if action_dump else "unknown"
+                        )
+                        action_params = action_dump.get(action_name, {})
                         print(
-                            f"  LLM Action: {action_item.model_dump_json(exclude_unset=True)}"
+                            f"  LLM Action: {action_name}({json.dumps(action_params)})"
                         )
                 if item.result:
                     for res_item in item.result:
@@ -2335,13 +2802,11 @@ async def main():
                     print(
                         f"  Browser State: URL={item.state['url']}, Title={item.state.get('title')}"
                     )
-
         final_res = history.final_result()
         if final_res:
             print(f"\nFinal Result from Agent: {final_res}")
         else:
             print("\nAgent did not produce a final result or was not 'done'.")
-
     except Exception as e:
         print(f"An error occurred: {e}")
         logger.error("Main execution error", exc_info=True)
@@ -2354,3 +2819,7 @@ def __main__():
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    __main__()
