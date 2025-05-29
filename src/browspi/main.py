@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import inspect
 import json
 import logging
@@ -16,7 +17,7 @@ from urllib.parse import urlparse
 from warnings import filterwarnings
 
 from dotenv import load_dotenv
-from langchain_core._api import LangChainBetaWarning
+from langchain_core._api import LangChainBetaWarning  # type: ignore
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -25,16 +26,17 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from playwright.async_api import (
-    Error as PlaywrightError,
-)
-from playwright.async_api import (
+from playwright.async_api import (  # type: ignore
+    ElementHandle,
     Page,
 )
-from playwright.async_api import (
+from playwright.async_api import (  # type: ignore
+    Error as PlaywrightError,
+)
+from playwright.async_api import (  # type: ignore
     TimeoutError as PlaywrightTimeoutError,
 )
-from pydantic import (
+from pydantic import (  # type: ignore
     BaseModel,
     ConfigDict,
     Field,
@@ -53,16 +55,321 @@ from typing_extensions import (
     Union,
 )
 
-from browspi.services.browser.service import (
-    DEFAULT_BROWSER_PROFILE,
-    BrowserProfile,
-    BrowserSession,
-    BrowserStateSummary,
-)
+# Assuming browspi.services.browser.service contains necessary classes
+# For this example, we'll mock them or define simplified versions if not provided
+# from browspi.services.browser.service import (
+#     DEFAULT_BROWSER_PROFILE,
+#     BrowserProfile,
+#     BrowserSession, # This will be the user's BrowserSession
+#     BrowserStateSummary,
+# )
+
 
 filterwarnings("ignore", category=LangChainBetaWarning)
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+# --- Simplified/Mocked Browser Service Components ---
+# These should ideally come from your browspi.services.browser.service
+# For the purpose of this example, let's define minimal versions.
+
+
+class DOMElementNode(BaseModel):  # Simplified from browser-use for selector_map value
+    xpath: str
+    tag_name: str
+    attributes: Dict[str, Any] = {}
+    highlight_index: Optional[int] = None
+    # Add other fields if your selector_map provides them and they are needed
+
+
+class BrowserStateSummary(BaseModel):
+    url: str
+    title: str
+    screenshot: Optional[str] = None
+    tabs: List[Dict[str, Any]] = []  # Simplified
+    element_tree: Optional[Any] = (
+        None  # Simplified, structure depends on your implementation
+    )
+    selector_map: Dict[
+        int, DOMElementNode
+    ] = {}  # Maps index to simplified element info
+    pixels_above: Optional[int] = None
+    pixels_below: Optional[int] = None
+
+    def clickable_elements_to_string(
+        self, include_attributes: Optional[List[str]] = None
+    ) -> str:
+        # This is a mock. In a real scenario, this would format self.element_tree
+        # or iterate self.selector_map to produce a string representation.
+        if not self.selector_map:
+            return "No interactive elements found."
+
+        lines = []
+        for index, element_info in sorted(self.selector_map.items()):
+            line = f"Index {index}: <{element_info.tag_name}>"
+            attrs_to_show = include_attributes or [
+                "id",
+                "name",
+                "role",
+                "aria-label",
+                "text_content",
+            ]
+            attr_strings = []
+            for attr_name in attrs_to_show:
+                if (
+                    attr_name in element_info.attributes
+                    and element_info.attributes[attr_name]
+                ):
+                    attr_strings.append(
+                        f'{attr_name}="{str(element_info.attributes[attr_name])[:30]}"'
+                    )
+            if attr_strings:
+                line += f" [{', '.join(attr_strings)}]"
+
+            # Attempt to get text content if available in attributes
+            text_content = element_info.attributes.get(
+                "text_content"
+            ) or element_info.attributes.get("aria-label")
+            if text_content:
+                line += f" (Text: '{str(text_content)[:50]}...')"
+
+            lines.append(line)
+        return "\n".join(lines)
+
+
+class BrowserProfile(BaseModel):
+    user_data_dir: Optional[str] = None
+    executable_path: Optional[str] = None
+    headless: bool = True
+    args: List[str] = []
+    include_attributes: List[str] = Field(
+        default_factory=lambda: [
+            "id",
+            "class",
+            "name",
+            "role",
+            "aria-label",
+            "placeholder",
+            "value",
+            "alt",
+            "type",
+            "title",
+            "href",
+        ]
+    )
+    highlight_elements: bool = False
+    wait_between_actions: float = 0.5  # seconds
+    cookies_file: Optional[str] = None
+    storage_state: Optional[str] = None
+    viewport: Optional[Dict[str, int]] = None  
+
+
+DEFAULT_BROWSER_PROFILE = BrowserProfile()
+
+
+class BrowserSession:  # User's BrowserSession
+    def __init__(self, browser_profile: BrowserProfile):
+        self.browser_profile = browser_profile
+        self.playwright_context: Optional[Any] = (
+            None  # playwright.async_api.BrowserContext
+        )
+        self.agent_current_page: Optional[Page] = None
+        self.initialized: bool = False
+        self._cached_browser_state_summary: Optional[BrowserStateSummary] = None
+        self._cached_clickable_element_hashes: Optional[Any] = (
+            None  # As in browser-use for DOM change detection
+        )
+
+    async def start(self):
+        from playwright.async_api import async_playwright # type: ignore
+        p = await async_playwright().start()
+
+        if self.browser_profile.user_data_dir:
+            logger.info(f"Attempting to launch persistent context with user_data_dir: {self.browser_profile.user_data_dir}")
+            try:
+                self.playwright_context = await p.chromium.launch_persistent_context(
+                    user_data_dir=self.browser_profile.user_data_dir,
+                    headless=self.browser_profile.headless,
+                    executable_path=self.browser_profile.executable_path,
+                    args=self.browser_profile.args,
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                    viewport=self.browser_profile.viewport,  # MODIFIED: Pass viewport
+                )
+                if self.playwright_context.pages:
+                    self.agent_current_page = self.playwright_context.pages[0]
+                else:
+                    self.agent_current_page = await self.playwright_context.new_page()
+                logger.info(f"Launched persistent context with profile: {self.browser_profile.user_data_dir}")
+            except Exception as e:
+                logger.error(f"Failed to launch persistent context with user_data_dir '{self.browser_profile.user_data_dir}': {e}", exc_info=True)
+                logger.info("Falling back to non-persistent context launch.")
+                await self._launch_non_persistent_context(p)
+        else:
+            logger.info("Launching non-persistent context (no user_data_dir specified in profile).")
+            await self._launch_non_persistent_context(p)
+
+        self.initialized = True
+        logger.info("Browser session started.")
+
+    async def _launch_non_persistent_context(self, playwright_instance):
+        """Helper method to launch a non-persistent browser context."""
+        browser = await playwright_instance.chromium.launch(
+            headless=self.browser_profile.headless,
+            executable_path=self.browser_profile.executable_path,
+            args=self.browser_profile.args
+        )
+        self.playwright_context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            viewport=self.browser_profile.viewport,  # MODIFIED: Pass viewport
+        )
+        if self.browser_profile.storage_state and os.path.exists(self.browser_profile.storage_state):
+            logger.info(f"Loading storage state for new context from: {self.browser_profile.storage_state}")
+            try:
+                with open(self.browser_profile.storage_state, 'r') as f:
+                    storage_state_dict = json.load(f)
+                await self.playwright_context.add_cookies(storage_state_dict.get('cookies', []))
+            except Exception as e:
+                logger.error(f"Failed to load storage state from '{self.browser_profile.storage_state}': {e}", exc_info=True)
+        
+        self.agent_current_page = await self.playwright_context.new_page()
+        logger.info("Launched non-persistent context.")
+
+    async def stop(self):
+        if self.playwright_context:
+            await self.playwright_context.close()
+        # playwright instance p from start() might need to be closed too if stored
+        logger.info("Browser session stopped.")
+
+    async def get_current_page(self) -> Page:
+        if not self.agent_current_page or self.agent_current_page.is_closed():
+            if self.playwright_context and self.playwright_context.pages:
+                self.agent_current_page = self.playwright_context.pages[0]
+            elif self.playwright_context:
+                self.agent_current_page = await self.playwright_context.new_page()
+            else:
+                raise PlaywrightError("Browser context not available to get a page.")
+        if not self.agent_current_page:  # Still none
+            raise PlaywrightError("Failed to get or create a current page.")
+        return self.agent_current_page
+
+    async def navigate(self, url: str):
+        page = await self.get_current_page()
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+    async def get_state_summary(
+        self, cache_clickable_elements_hashes: bool = True
+    ) -> BrowserStateSummary:
+        # This is a simplified version. A real one would run JS on the page
+        # like browser-use's DomService to get element_tree and selector_map.
+        # For now, we'll mock it.
+        page = await self.get_current_page()
+        title = await page.title()
+        url = page.url
+
+        # Mocked element extraction - replace with actual DOM traversal if possible
+        # This part is crucial and complex. browser-use uses buildDomTree.js
+        selector_map_mock: Dict[int, DOMElementNode] = {}
+        try:
+            # A very basic way to get some interactive elements.
+            # This will not be as robust or complete as browser-use.
+            interactive_elements = await page.query_selector_all(
+                'button, a[href], input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [onclick]'
+            )
+            idx = 0
+            for el_handle in interactive_elements:
+                if await el_handle.is_visible():  # Only consider visible elements
+                    tag_name = (await el_handle.evaluate("el => el.tagName")).lower()
+                    xpath = await self._get_xpath(el_handle)  # Helper to get XPath
+                    attributes = await el_handle.evaluate(
+                        "el => { const attrs = {}; for (let i = 0; i < el.attributes.length; i++) { attrs[el.attributes[i].name] = el.attributes[i].value; } return attrs; }"
+                    )
+                    text_content = await el_handle.text_content()
+                    if text_content:
+                        attributes["text_content"] = text_content.strip()
+
+                    selector_map_mock[idx] = DOMElementNode(
+                        xpath=xpath,
+                        tag_name=tag_name,
+                        attributes=attributes,
+                        highlight_index=idx,
+                    )
+                    idx += 1
+        except Exception as e:
+            logger.error(f"Error extracting elements for mock selector_map: {e}")
+
+        # Screenshot (optional)
+        screenshot_b64 = None
+        try:
+            screenshot_bytes = await page.screenshot()
+            screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+        except Exception as e:
+            logger.warning(f"Could not take screenshot: {e}")
+
+        summary = BrowserStateSummary(
+            url=url,
+            title=title,
+            selector_map=selector_map_mock,  # Using the mocked map
+            screenshot=screenshot_b64,
+            # element_tree and other fields would be populated by a more complex DOM analysis
+        )
+        self._cached_browser_state_summary = summary
+
+        # DOM change detection (simplified)
+        if cache_clickable_elements_hashes:
+            current_hashes = {
+                info.xpath for info in selector_map_mock.values()
+            }  # Using xpath as a simple hash
+            if self._cached_clickable_element_hashes:
+                # Compare current_hashes with self._cached_clickable_element_hashes.hashes
+                # and update is_new in DOMElementNode if your structure supports it.
+                pass  # Placeholder for actual change detection logic
+            self._cached_clickable_element_hashes = {
+                "url": url,
+                "hashes": current_hashes,
+            }
+
+        return summary
+
+    async def _get_xpath(self, element: ElementHandle) -> str:
+        # Simplified XPath generation. A robust solution is more complex.
+        return await element.evaluate(
+            """
+            el => {
+                if (!el || el.nodeType !== 1) return '';
+                const paths = [];
+                for (; el && el.nodeType === 1; el = el.parentNode) {
+                    let index = 0;
+                    for (let sibling = el.previousSibling; sibling; sibling = sibling.previousSibling) {
+                        if (sibling.nodeType === 1 && sibling.nodeName === el.nodeName) {
+                            index++;
+                        }
+                    }
+                    const tagName = el.nodeName.toLowerCase();
+                    const pathIndex = (index ? `[${index + 1}]` : '');
+                    paths.splice(0, 0, tagName + pathIndex);
+                }
+                return paths.length ? '/' + paths.join('/') : '';
+            }
+        """
+        )
+
+    async def close_tab(self, page_id: int):  # page_id here is an index
+        if self.playwright_context and 0 <= page_id < len(
+            self.playwright_context.pages
+        ):
+            page_to_close = self.playwright_context.pages[page_id]
+            if page_to_close == self.agent_current_page:
+                self.agent_current_page = None  # Will be reset by get_current_page
+            await page_to_close.close()
+            logger.info(f"Closed tab with index: {page_id}")
+        else:
+            logger.warning(
+                f"Tab index {page_id} out of range or context not available."
+            )
+
+
+# --- End Simplified/Mocked Browser Service Components ---
 
 
 def addLoggingLevel(levelName, levelNum, methodName=None):
@@ -95,9 +402,11 @@ def setup_logging():
         pass
     log_type = os.getenv("browspi_LOGGING_LEVEL", "info").lower()
     if logging.getLogger().hasHandlers():
-        return
+        # Clear existing handlers if any, to avoid duplicate logs in interactive environments
+        logging.getLogger().handlers = []
+
     root = logging.getLogger()
-    root.handlers = []
+    # root.handlers = [] # Ensure handlers are cleared if re-running setup
 
     class ProjectFormatter(logging.Formatter):
         def format(self, record):
@@ -111,21 +420,25 @@ def setup_logging():
 
     console = logging.StreamHandler(sys.stdout)
     if log_type == "result":
-        console.setLevel("RESULT")
+        console.setLevel("RESULT")  # type: ignore
         console.setFormatter(ProjectFormatter("%(message)s"))
     else:
         console.setFormatter(ProjectFormatter("%(levelname)-8s [%(name)s] %(message)s"))
     root.addHandler(console)
     if log_type == "result":
-        root.setLevel("RESULT")
+        root.setLevel("RESULT")  # type: ignore
     elif log_type == "debug":
         root.setLevel(logging.DEBUG)
     else:
         root.setLevel(logging.INFO)
     main_logger = logging.getLogger(__name__)
-    main_logger.propagate = False
-    main_logger.addHandler(console)
-    main_logger.setLevel(root.level)
+    main_logger.propagate = (
+        False  # Prevent passing to root logger if it has other handlers
+    )
+    main_logger.handlers = []  # Clear its own handlers first
+    main_logger.addHandler(console)  # Add the configured console handler
+    main_logger.setLevel(root.level)  # Set its level to the root's level
+
     third_party_loggers = [
         "httpx",
         "playwright",
@@ -136,7 +449,7 @@ def setup_logging():
     ]
     for logger_name in third_party_loggers:
         third_party = logging.getLogger(logger_name)
-        third_party.setLevel(logging.ERROR)
+        third_party.setLevel(logging.ERROR)  # Or logging.WARNING
         third_party.propagate = False
 
 
@@ -191,9 +504,9 @@ class ActionModel(BaseModel):
                 value["index"] = index
                 setattr(self, field_name, value)
                 return
-            if hasattr(value, "index"):
-                value.index = index
-                return  # type: ignore
+            if hasattr(value, "index"):  # type: ignore
+                value.index = index  # type: ignore
+                return
         logger.warning(f"Could not set index on action: {self}")
 
 
@@ -275,10 +588,10 @@ class ActionRegistry(BaseModel):
                 page
                 and action.domains
                 and not any(
-                    urlparse(page.url).hostname.endswith(d.lstrip("*."))
+                    urlparse(page.url).hostname.endswith(d.lstrip("*."))  # type: ignore
                     for d in action.domains
                 )
-            )  # type: ignore
+            )
             and not (page and action.page_filter and not action.page_filter(page))
         )
 
@@ -293,15 +606,15 @@ class ActionRegistry(BaseModel):
                 page
                 and action_info.domains
                 and not any(
-                    urlparse(page.url).hostname.endswith(d.lstrip("*."))
+                    urlparse(page.url).hostname.endswith(d.lstrip("*."))  # type: ignore
                     for d in action_info.domains
                 )
             ):
-                continue  # type: ignore
+                continue
             if page and action_info.page_filter and not action_info.page_filter(page):
                 continue
             fields[name] = (
-                Optional[action_info.param_model],
+                Optional[action_info.param_model],  # type: ignore
                 Field(default=None, description=action_info.description),
             )
         return create_model("DynamicActionModel", __base__=ActionModel, **fields)  # type: ignore
@@ -319,22 +632,22 @@ class Controller(Generic[Context]):
         if output_model:
 
             class CustomDoneAction(BaseModel):
-                data: output_model
-                success: bool  # type: ignore
+                data: output_model  # type: ignore
+                success: bool
 
             self.registry.actions["done"] = RegisteredAction(
                 name="done",
                 description="Completes the task with custom output",
-                function=self._custom_done_action_func,
+                function=self._custom_done_action_func,  # type: ignore
                 param_model=CustomDoneAction,
-            )  # type: ignore
+            )
 
     async def _custom_done_action_func(self, params: BaseModel):
         return ActionResult(
             is_done=True,
-            success=params.success,
-            extracted_content=params.data.model_dump_json(),
-        )  # type: ignore
+            success=params.success,  # type: ignore
+            extracted_content=params.data.model_dump_json(),  # type: ignore
+        )
 
     def action(
         self, description: str, param_model: Optional[Type[BaseModel]] = None, **kwargs
@@ -351,16 +664,22 @@ class Controller(Generic[Context]):
                         p.default if p.default != inspect.Parameter.empty else ...,
                     )
                     for name, p in sig.parameters.items()
-                    if name not in ["browser_session", "page_extraction_llm", "context"]
+                    if name
+                    not in [
+                        "browser_session",
+                        "page_extraction_llm",
+                        "context",
+                        "self",
+                    ]  # Added "self"
                 }
                 actual_param_model = create_model(f"{func.__name__}Params", **fields)  # type: ignore
             self.registry.actions[func.__name__] = RegisteredAction(
                 name=func.__name__,
                 description=description,
                 function=func,
-                param_model=actual_param_model,
+                param_model=actual_param_model,  # type: ignore
                 **kwargs,
-            )  # type: ignore
+            )
             return func
 
         return decorator
@@ -390,57 +709,477 @@ class Controller(Generic[Context]):
             params: ClickElementAction, browser_session: BrowserSession
         ):
             logger.info(f"Attempting to click element with index: {params.index}")
-            state = await browser_session.get_state_summary(
-                cache_clickable_elements_hashes=False
-            )
-            if params.index in state.selector_map:
-                element_to_click = state.selector_map[params.index]
-                page = await browser_session.get_current_page()
+            if not browser_session._cached_browser_state_summary:
+                return ActionResult(
+                    error=f"Browser state not yet summarized. Cannot find element {params.index}"
+                )
+
+            state = browser_session._cached_browser_state_summary
+
+            if params.index not in state.selector_map:  # Check if index exists first
+                return ActionResult(
+                    error=f"Element with index {params.index} not found in selector_map."
+                )
+
+            element_info = state.selector_map[params.index]
+            page = await browser_session.get_current_page()
+
+            base_locator = page.locator(f"xpath={element_info.xpath}")
+
+            final_element_handle: Optional[ElementHandle] = None
+            # Keep track of handles from element_handles() to dispose them
+            candidate_handles_to_dispose: List[ElementHandle] = []
+
+            try:
+                # Corrected: Removed timeout from element_handles()
+                matching_elements = await base_locator.element_handles()
+                candidate_handles_to_dispose.extend(
+                    matching_elements
+                )  # Add all to dispose list initially
+
+                if not matching_elements:
+                    return ActionResult(
+                        error=f"No elements found for XPath: {element_info.xpath} (index {params.index})."
+                    )
+
+                if len(matching_elements) == 1:
+                    final_element_handle = matching_elements[0]
+                    logger.info(
+                        f"XPath {element_info.xpath} for index {params.index} resolved to a unique element."
+                    )
+                else:
+                    logger.warning(
+                        f"XPath {element_info.xpath} for index {params.index} resolved to {len(matching_elements)} elements. Attempting to disambiguate."
+                    )
+
+                    attr_id_val = element_info.attributes.get("id")
+                    attr_name_val = element_info.attributes.get("name")
+                    attr_value_val = element_info.attributes.get("value")
+                    attr_aria_label_val = element_info.attributes.get("aria-label")
+                    attr_text_content_val = (
+                        element_info.attributes.get("text_content") or ""
+                    ).strip()
+
+                    found_specific_match_idx = -1
+
+                    for i, el_handle_candidate in enumerate(matching_elements):
+                        try:
+                            candidate_id = await el_handle_candidate.get_attribute("id")
+                            candidate_name = await el_handle_candidate.get_attribute(
+                                "name"
+                            )
+                            candidate_value = await el_handle_candidate.get_attribute(
+                                "value"
+                            )
+                            candidate_aria_label = (
+                                await el_handle_candidate.get_attribute("aria-label")
+                            )
+                            candidate_text = (
+                                await el_handle_candidate.text_content() or ""
+                            ).strip()
+
+                            matches_criteria = True  # Assume match, then disprove
+                            if attr_id_val is not None and candidate_id != attr_id_val:
+                                matches_criteria = False
+                            elif (
+                                attr_name_val is not None
+                                and candidate_name != attr_name_val
+                            ):
+                                matches_criteria = False
+                            elif (
+                                attr_value_val is not None
+                                and candidate_value != attr_value_val
+                            ):
+                                matches_criteria = False
+                            elif (
+                                attr_aria_label_val is not None
+                                and candidate_aria_label != attr_aria_label_val
+                            ):
+                                matches_criteria = False
+                            # Only check text_content if it's substantial in stored attributes
+                            elif (
+                                attr_text_content_val
+                                and candidate_text != attr_text_content_val
+                            ):
+                                matches_criteria = False
+
+                            if matches_criteria:
+                                final_element_handle = el_handle_candidate
+                                found_specific_match_idx = i
+                                logger.info(
+                                    f"Disambiguated to element #{i + 1} of {len(matching_elements)} for index {params.index} using stored attributes."
+                                )
+                                break
+                        except Exception as eval_err:
+                            logger.warning(
+                                f"Error evaluating attributes for candidate element #{i + 1}: {eval_err}"
+                            )
+                            continue
+
+                    if not final_element_handle:  # Disambiguation failed
+                        logger.warning(
+                            f"Could not uniquely disambiguate element for index {params.index}. Falling back to the first element."
+                        )
+                        if matching_elements:  # If list is not empty
+                            final_element_handle = matching_elements[
+                                0
+                            ]  # Fallback to the first one
+                            found_specific_match_idx = 0
+
+                    # Manage disposal: only keep the final_element_handle, mark others for disposal
+                    temp_dispose_list = []
+                    if final_element_handle:  # If a handle was chosen or fell back to
+                        for i, h in enumerate(candidate_handles_to_dispose):
+                            if (
+                                h == final_element_handle
+                                and i == found_specific_match_idx
+                            ):  # This is the one we're keeping
+                                continue
+                            temp_dispose_list.append(h)
+                    else:  # No handle chosen (e.g. all candidates error-ed out during attr check)
+                        temp_dispose_list.extend(candidate_handles_to_dispose)
+
+                    for h_to_dispose in temp_dispose_list:
+                        try:
+                            await h_to_dispose.dispose()
+                        except Exception:
+                            pass  # Ignore errors on dispose during this cleanup
+
+                    # The candidate_handles_to_dispose list will be fully cleared or managed in the outer finally block.
+                    # For now, final_element_handle is what matters.
+                    if (
+                        final_element_handle
+                        and final_element_handle not in temp_dispose_list
+                    ):
+                        candidate_handles_to_dispose = [
+                            final_element_handle
+                        ]  # It's the one we're using
+                    else:  # No valid handle, or it was already marked for disposal.
+                        candidate_handles_to_dispose = []
+
+                if not final_element_handle:
+                    return ActionResult(
+                        error=f"Could not obtain a specific element handle for index {params.index} (xpath: {element_info.xpath})."
+                    )
+
+                if not await final_element_handle.is_visible():
+                    logger.warning(
+                        f"Element {params.index} (xpath: {element_info.xpath}) is not visible. Attempting click anyway."
+                    )
+
                 try:
-                    await page.locator(f"xpath={element_to_click.xpath}").click(
-                        timeout=5000
+                    logger.debug(
+                        f"Attempting Playwright click for refined element {params.index} (xpath: {element_info.xpath})"
+                    )
+                    await final_element_handle.click(timeout=3000)
+                    logger.info(
+                        f"Successfully clicked element {params.index} using Playwright click."
                     )
                     return ActionResult(
-                        extracted_content=f"Clicked element at index {params.index} ({element_to_click.tag_name})",
+                        extracted_content=f"Clicked element at index {params.index} ({element_info.tag_name})",
                         include_in_memory=True,
-                    )  # type: ignore
-                except Exception as e:
-                    logger.error(f"Failed to click element {params.index}: {e}")
-                    return ActionResult(
-                        error=f"Failed to click element at index {params.index}: {str(e)}"
                     )
-            return ActionResult(error=f"Element with index {params.index} not found.")
+                except PlaywrightTimeoutError:
+                    logger.warning(
+                        f"Playwright click timed out for element {params.index}. Trying JS click."
+                    )
+                except PlaywrightError as pe_click:
+                    logger.warning(
+                        f"Playwright click failed for element {params.index}: {pe_click}. Trying JS click."
+                    )
+
+                try:
+                    logger.debug(
+                        f"Attempting JavaScript click for element {params.index} (xpath: {element_info.xpath})"
+                    )
+                    await page.evaluate("(el) => el.click()", final_element_handle)
+                    logger.info(
+                        f"Successfully clicked element {params.index} using JavaScript click."
+                    )
+                    return ActionResult(
+                        extracted_content=f"Clicked element at index {params.index} ({element_info.tag_name}) via JS",
+                        include_in_memory=True,
+                    )
+                except Exception as js_e:
+                    logger.error(
+                        f"JavaScript click failed for element {params.index}: {js_e}"
+                    )
+                    return ActionResult(
+                        error=f"Failed to click element at index {params.index} (xpath: {element_info.xpath}) using both methods: JS click error: {js_e}"
+                    )
+            except PlaywrightTimeoutError:  # This timeout is for page level operations if any were added before element_handles
+                logger.error(
+                    f"Timeout occurred in click_element_by_index for XPath: {element_info.xpath} (index {params.index})."
+                )
+                return ActionResult(
+                    error=f"Timeout resolving locator or operation for XPath: {element_info.xpath} (index {params.index})."
+                )
+            except Exception as e:
+                logger.error(
+                    f"General error in click_element_by_index for {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}",
+                    exc_info=True,
+                )
+                return ActionResult(
+                    error=f"Failed to click element at index {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}"
+                )
+            finally:
+                # General cleanup of any handles that might still be in candidate_handles_to_dispose
+                # and the final_element_handle itself.
+                all_handles_to_check_dispose = []
+                if final_element_handle:  # Add the primary handle used, if any
+                    all_handles_to_check_dispose.append(final_element_handle)
+
+                # Add any other handles collected (duplicates will be handled by set conversion if needed, or just iterated)
+                all_handles_to_check_dispose.extend(candidate_handles_to_dispose)
+
+                # Unique handles to dispose
+                unique_handles_to_dispose = []
+                seen_handles = set()
+                for h in all_handles_to_check_dispose:
+                    if h not in seen_handles:
+                        unique_handles_to_dispose.append(h)
+                        seen_handles.add(h)
+
+                for h_to_dispose in unique_handles_to_dispose:
+                    try:
+                        await h_to_dispose.dispose()
+                    except Exception:
+                        pass  # Suppress errors during cleanup
 
         @self.action("Input text into an element", param_model=InputTextAction)
         async def input_text(params: InputTextAction, browser_session: BrowserSession):
             logger.info(
                 f"Attempting to input text '{params.text}' into element with index: {params.index}"
             )
-            state = await browser_session.get_state_summary(
-                cache_clickable_elements_hashes=False
-            )
-            if params.index in state.selector_map:
-                element_to_input = state.selector_map[params.index]
-                page = await browser_session.get_current_page()
-                try:
-                    await page.locator(f"xpath={element_to_input.xpath}").fill(
-                        params.text, timeout=5000
+            if not browser_session._cached_browser_state_summary:
+                return ActionResult(
+                    error=f"Browser state not yet summarized. Cannot find element {params.index}"
+                )
+            state = browser_session._cached_browser_state_summary
+
+            if params.index not in state.selector_map:
+                return ActionResult(
+                    error=f"Element with index {params.index} not found in selector_map."
+                )
+
+            element_info = state.selector_map[params.index]
+            page = await browser_session.get_current_page()
+            
+            base_locator = page.locator(f"xpath={element_info.xpath}")
+            final_element_handle: Optional[ElementHandle] = None
+            candidate_handles_to_dispose: List[ElementHandle] = []
+
+            try:
+                matching_elements = await base_locator.element_handles()
+                candidate_handles_to_dispose.extend(matching_elements)
+
+                if not matching_elements:
+                    return ActionResult(
+                        error=f"No elements found for XPath: {element_info.xpath} (index {params.index})."
                     )
+
+                if len(matching_elements) == 1:
+                    # If only one, check if it's disabled. If it's the intended non-disabled input, great.
+                    # If it's disabled but was the only one found by XPath, input might fail but we try.
+                    is_sole_candidate_disabled = await matching_elements[0].is_disabled()
+                    if is_sole_candidate_disabled:
+                        logger.warning(f"XPath {element_info.xpath} for index {params.index} resolved to a unique but DISABLED element. Input may fail.")
+                    else:
+                        logger.info(f"XPath {element_info.xpath} for index {params.index} resolved to a unique, non-disabled element.")
+                    final_element_handle = matching_elements[0]
+                else: # Multiple elements found, need to disambiguate
+                    logger.warning(
+                        f"XPath {element_info.xpath} for index {params.index} resolved to {len(matching_elements)} elements. Attempting to disambiguate for input."
+                    )
+                    
+                    # Get attributes from element_info for comparison
+                    attr_id_val = element_info.attributes.get("id")
+                    attr_name_val = element_info.attributes.get("name")
+                    attr_value_val = element_info.attributes.get("value") # Less common for input target, but possible
+                    attr_role_val = element_info.attributes.get("role")
+                    attr_aria_label_val = element_info.attributes.get("aria-label")
+                    attr_placeholder_val = element_info.attributes.get("placeholder")
+                    # text_content is usually not for input fields themselves but could be a label associated elsewhere
+                    attr_text_content_val = (element_info.attributes.get("text_content") or "").strip()
+
+
+                    found_specific_match_idx = -1
+
+                    for i, el_handle_candidate in enumerate(matching_elements):
+                        try:
+                            if await el_handle_candidate.is_disabled():
+                                logger.debug(f"Candidate element #{i+1} is disabled, skipping for input.")
+                                continue # Skip disabled elements for input
+
+                            # Compare with stored attributes
+                            candidate_id = await el_handle_candidate.get_attribute("id")
+                            candidate_name = await el_handle_candidate.get_attribute("name")
+                            candidate_value = await el_handle_candidate.get_attribute("value")
+                            candidate_role = await el_handle_candidate.get_attribute("role")
+                            candidate_aria_label = await el_handle_candidate.get_attribute("aria-label")
+                            candidate_placeholder = await el_handle_candidate.get_attribute("placeholder")
+                            # candidate_text = (await el_handle_candidate.text_content() or "").strip() # Usually not for input value
+
+                            matches_criteria = True # Assume match
+                            if attr_id_val is not None and candidate_id != attr_id_val: matches_criteria = False
+                            elif attr_name_val is not None and candidate_name != attr_name_val: matches_criteria = False
+                            elif attr_role_val is not None and candidate_role != attr_role_val: matches_criteria = False
+                            elif attr_aria_label_val is not None and candidate_aria_label != attr_aria_label_val: matches_criteria = False
+                            elif attr_placeholder_val is not None and candidate_placeholder != attr_placeholder_val: matches_criteria = False
+                            # Add value or text_content checks if relevant for your specific input identification
+                            # For example, if a pre-filled value helps identify it, or if element_info.text_content
+                            # refers to an associated label that uniquely identifies this input.
+
+                            if matches_criteria:
+                                final_element_handle = el_handle_candidate
+                                found_specific_match_idx = i
+                                logger.info(
+                                    f"Disambiguated for input to non-disabled element #{i + 1} of {len(matching_elements)} for index {params.index} using stored attributes."
+                                )
+                                break # Found a suitable non-disabled match
+                        except Exception as eval_err:
+                            logger.warning(
+                                f"Error evaluating attributes for input candidate element #{i + 1}: {eval_err}"
+                            )
+                            continue
+                    
+                    if not final_element_handle: # Disambiguation failed to find a specific non-disabled match
+                        logger.warning(
+                            f"Could not uniquely disambiguate a non-disabled input element for index {params.index}. Falling back to the first non-disabled element if any, else first overall."
+                        )
+                        # Fallback: try first non-disabled, then first overall if all are disabled or error
+                        first_non_disabled_handle = None
+                        first_non_disabled_idx = -1
+                        for i, el_handle_candidate in enumerate(matching_elements):
+                            if not await el_handle_candidate.is_disabled():
+                                first_non_disabled_handle = el_handle_candidate
+                                first_non_disabled_idx = i
+                                break
+                        
+                        if first_non_disabled_handle:
+                            final_element_handle = first_non_disabled_handle
+                            found_specific_match_idx = first_non_disabled_idx
+                            logger.info(f"Falling back to first non-disabled element (#{first_non_disabled_idx +1}) for input.")
+                        elif matching_elements: # All were disabled or errored, take the absolute first
+                            final_element_handle = matching_elements[0]
+                            found_specific_match_idx = 0
+                            logger.warning("All candidates were disabled or errored during check. Falling back to the very first element for input. This might fail.")
+
+                    # Manage disposal list
+                    temp_dispose_list = []
+                    if final_element_handle:
+                        for i, h in enumerate(candidate_handles_to_dispose):
+                            if h == final_element_handle and i == found_specific_match_idx:
+                                continue
+                            temp_dispose_list.append(h)
+                    else:
+                        temp_dispose_list.extend(candidate_handles_to_dispose)
+                    
+                    for h_to_dispose in temp_dispose_list:
+                        try: await h_to_dispose.dispose()
+                        except Exception: pass
+                    
+                    candidate_handles_to_dispose = [final_element_handle] if final_element_handle else []
+
+                # --- Proceed with input using final_element_handle ---
+                if not final_element_handle:
+                    return ActionResult(
+                        error=f"Could not obtain a specific element handle for input at index {params.index} (xpath: {element_info.xpath})."
+                    )
+
+                if not await final_element_handle.is_visible():
+                    logger.warning(
+                        f"Element {params.index} (xpath: {element_info.xpath}) is not visible. Attempting input anyway."
+                    )
+                
+                # Ensure element is enabled before trying to type/fill
+                if await final_element_handle.is_disabled():
+                    logger.error(f"Target element {params.index} (xpath: {element_info.xpath}) is disabled. Cannot input text.")
+                    return ActionResult(error=f"Element {params.index} is disabled, cannot input text.")
+
+                # Attempt to click/focus first, then clear, then input
+                try:
+                    await final_element_handle.click(timeout=1000) # Focus the element
+                except Exception as click_err:
+                    logger.debug(
+                        f"Pre-input click/focus failed for element {params.index}: {click_err}, continuing with input attempt."
+                    )
+
+                try: # Clear existing content
+                    tag_name = (await final_element_handle.evaluate("el => el.tagName")).lower()
+                    is_content_editable = await final_element_handle.evaluate("el => el.isContentEditable")
+                    if tag_name in ["input", "textarea"] or is_content_editable:
+                        logger.debug(f"Clearing content for element {params.index}")
+                        await final_element_handle.evaluate('el => { if(typeof el.value !== "undefined") el.value = ""; if(el.isContentEditable) el.textContent = ""; }')
+                except Exception as clear_e:
+                    logger.warning(f"Could not clear content of element {params.index}: {clear_e}")
+
+                # Try fill, then type, then keyboard
+                try:
+                    logger.debug(f"Attempting Playwright fill for element {params.index}")
+                    await final_element_handle.fill(params.text, timeout=3000)
+                    logger.info(f"Successfully input text into element {params.index} using fill.")
                     return ActionResult(
                         extracted_content=f"Inputted '{params.text}' into element {params.index}",
                         include_in_memory=True,
-                    )  # type: ignore
-                except Exception as e:
-                    logger.error(
-                        f"Failed to input text into element {params.index}: {e}"
                     )
+                except PlaywrightError as pe_fill:
+                    logger.warning(f"Playwright fill failed for element {params.index}: {pe_fill}. Trying type.")
+                
+                try:
+                    logger.debug(f"Attempting Playwright type for element {params.index}")
+                    await final_element_handle.type(params.text, delay=50, timeout=5000)
+                    logger.info(f"Successfully input text into element {params.index} using type.")
                     return ActionResult(
-                        error=f"Failed to input text into element {params.index}: {str(e)}"
+                        extracted_content=f"Inputted '{params.text}' into element {params.index}",
+                        include_in_memory=True,
                     )
-            return ActionResult(
-                error=f"Element with index {params.index} not found for input."
-            )
+                except PlaywrightError as pe_type:
+                    logger.warning(f"Playwright type failed for element {params.index}: {pe_type}. Trying page keyboard.")
 
+                try: # Fallback to page-level keyboard typing (less targeted)
+                    logger.debug(f"Attempting page keyboard type for element {params.index}")
+                    # Ensure element is focused before global keyboard typing
+                    await final_element_handle.focus(timeout=1000) 
+                    await page.keyboard.type(params.text, delay=50)
+                    logger.info(f"Successfully input text (assumed for element {params.index}) using page keyboard type.")
+                    return ActionResult(
+                        extracted_content=f"Inputted '{params.text}' likely into element {params.index} via keyboard",
+                        include_in_memory=True,
+                    )
+                except Exception as keyboard_e:
+                    logger.error(f"Page keyboard type failed for element {params.index}: {keyboard_e}")
+                    return ActionResult(
+                            error=f"Failed to input text into element at index {params.index} (xpath: {element_info.xpath}) using all methods: Keyboard type error: {keyboard_e}"
+                    )
+
+            except PlaywrightTimeoutError:
+                logger.error(f"Timeout occurred in input_text for XPath: {element_info.xpath} (index {params.index}).")
+                return ActionResult(error=f"Timeout resolving or operating on element for XPath: {element_info.xpath} (index {params.index}).")
+            except Exception as e:
+                logger.error(
+                    f"General error in input_text for {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}",
+                    exc_info=True,
+                )
+                return ActionResult(
+                    error=f"Failed to input text into element {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}"
+                )
+            finally:
+                all_handles_to_check_dispose = [final_element_handle] if final_element_handle else []
+                all_handles_to_check_dispose.extend(candidate_handles_to_dispose)
+                
+                unique_handles_to_dispose = []
+                seen_handles = set()
+                for h in all_handles_to_check_dispose:
+                    if h and h not in seen_handles: # ensure h is not None
+                        unique_handles_to_dispose.append(h)
+                        seen_handles.add(h)
+
+                for h_to_dispose in unique_handles_to_dispose:
+                    try:
+                        await h_to_dispose.dispose()
+                    except Exception: pass
+                    
         @self.action("Scroll down the page", param_model=ScrollAction)
         async def scroll_down(params: ScrollAction, browser_session: BrowserSession):
             page = await browser_session.get_current_page()
@@ -473,15 +1212,17 @@ class Controller(Generic[Context]):
 
         @self.action("Open URL in a new tab", param_model=OpenTabAction)
         async def open_tab(params: OpenTabAction, browser_session: BrowserSession):
-            if not browser_session.browser_context:
+            if not browser_session.playwright_context:
                 await browser_session.start()
-            new_page = await browser_session.browser_context.new_page()
+            if not browser_session.playwright_context:
+                return ActionResult(error="Browser context could not be initialized.")
+            new_page = await browser_session.playwright_context.new_page()
             await new_page.goto(params.url, wait_until="domcontentloaded")
             browser_session.agent_current_page = new_page
             return ActionResult(
                 extracted_content=f"Opened new tab with URL: {params.url}",
                 include_in_memory=True,
-            )  # type: ignore
+            )
 
         @self.action("Close an existing tab by its ID", param_model=CloseTabAction)
         async def close_tab_action(
@@ -495,9 +1236,9 @@ class Controller(Generic[Context]):
 
         @self.action("Switch to a specific tab by its ID", param_model=SwitchTabAction)
         async def switch_tab(params: SwitchTabAction, browser_session: BrowserSession):
-            if not browser_session.browser_context:
+            if not browser_session.playwright_context:
                 return ActionResult(error="Browser context not available.")
-            pages = browser_session.browser_context.pages
+            pages = browser_session.playwright_context.pages
             if 0 <= params.page_id < len(pages):
                 browser_session.agent_current_page = pages[params.page_id]
                 await browser_session.agent_current_page.bring_to_front()
@@ -571,12 +1312,14 @@ class Controller(Generic[Context]):
                 simplified_extraction_goal = (
                     "titles and links of news articles about COVID-19 in Vietnam"
                 )
+
             max_text_for_sub_llm = 10000
             text_to_process = (
                 text_content[:max_text_for_sub_llm]
                 if len(text_content) > max_text_for_sub_llm
                 else text_content
             )
+
             if not text_to_process.strip():
                 logger.warning(
                     f"No text for page_extraction_llm for goal: '{simplified_extraction_goal}'"
@@ -585,7 +1328,7 @@ class Controller(Generic[Context]):
                     f"No text found for: '{simplified_extraction_goal}'."
                 )
             elif page_extraction_llm:
-                sub_llm_prompt = f'Review TEXT_TO_PROCESS for goal: \'{simplified_extraction_goal}\'.\nList items clearly. For news, extract title and direct URL. State \'No specific information or articles found matching the goal.\' if none found.\n\nTEXT_TO_PROCESS:\n"""{text_to_process}"""'
+                sub_llm_prompt = f'Please review the following TEXT_TO_PROCESS to fulfill the goal: "{simplified_extraction_goal}". \nExtract the specific information requested. If the goal is to find articles, list their titles and direct URLs. \nIf no specific information or articles matching the goal are found in the text, clearly state that. \n\nTEXT_TO_PROCESS:\n"""{text_to_process}"""'
                 try:
                     logger.info(
                         f"Sending to page_extraction_llm. Goal: '{simplified_extraction_goal}'. Text length: {len(text_to_process)}"
@@ -599,6 +1342,8 @@ class Controller(Generic[Context]):
                     if (
                         not extracted_data.strip()
                         or "no specific information or articles found"
+                        in extracted_data.lower()
+                        or "i cannot directly access or browse urls"
                         in extracted_data.lower()
                     ):
                         extracted_data_summary = f"Sub-LLM: No specific info for '{simplified_extraction_goal}'."
@@ -615,6 +1360,7 @@ class Controller(Generic[Context]):
                     extracted_data_summary = f"Error during sub-LLM extraction for '{simplified_extraction_goal}': {type(e).__name__}."
             else:
                 extracted_data_summary = "page_extraction_llm not configured."
+
             return ActionResult(
                 extracted_content=extracted_data_summary, include_in_memory=True
             )
@@ -656,45 +1402,73 @@ class Controller(Generic[Context]):
         registered_action = self.registry.actions[action_name]
         action_kwargs: Dict[str, Any] = {}
         sig = inspect.signature(registered_action.function)
-        for p_name in [
-            "browser_session",
-            "page_extraction_llm",
-            "sensitive_data",
-            "available_file_paths",
-            "context",
-        ]:
-            if p_name in sig.parameters:
-                action_kwargs[p_name] = locals()[p_name]
+
+        if "browser_session" in sig.parameters:
+            action_kwargs["browser_session"] = browser_session
+        if "page_extraction_llm" in sig.parameters:
+            action_kwargs["page_extraction_llm"] = page_extraction_llm
+        if "sensitive_data" in sig.parameters:
+            action_kwargs["sensitive_data"] = sensitive_data
+        if "available_file_paths" in sig.parameters:
+            action_kwargs["available_file_paths"] = available_file_paths
+        if "context" in sig.parameters:
+            action_kwargs["context"] = context
+
         try:
             validated_params = (
-                registered_action.param_model(**params_obj)
+                registered_action.param_model(**params_obj)  # type: ignore
                 if isinstance(params_obj, dict)
                 else (
-                    params_obj
+                    params_obj  # type: ignore
                     if isinstance(params_obj, BaseModel)
-                    else registered_action.param_model()
+                    else registered_action.param_model()  # type: ignore
                 )
             )
-            first_param_name = (
-                list(sig.parameters.keys())[0] if sig.parameters else None
+
+            param_names_in_model = (
+                list(validated_params.model_fields.keys())
+                if hasattr(validated_params, "model_fields")
+                else []
             )
+
             if (
-                first_param_name
-                and first_param_name != "self"
-                and inspect.isclass(sig.parameters[first_param_name].annotation)
-                and isinstance(
-                    validated_params, sig.parameters[first_param_name].annotation
-                )
+                len(param_names_in_model) == 1
+                and param_names_in_model[0] in sig.parameters
             ):
-                result = await registered_action.function(
-                    validated_params, **action_kwargs
+                action_kwargs[param_names_in_model[0]] = getattr(
+                    validated_params, param_names_in_model[0]
                 )
-            elif hasattr(validated_params, "model_dump"):
-                result = await registered_action.function(
-                    **validated_params.model_dump(exclude_none=True), **action_kwargs
+                result = await registered_action.function(**action_kwargs)
+
+            elif (
+                all(p_name in sig.parameters for p_name in param_names_in_model)
+                and param_names_in_model
+            ):
+                action_kwargs.update(validated_params.model_dump(exclude_none=True))
+                result = await registered_action.function(**action_kwargs)
+
+            elif any(p_name == "params" for p_name in sig.parameters) or (
+                len(sig.parameters) - len(action_kwargs) == 1
+                and list(sig.parameters.keys())[0] != "self"
+            ):
+                first_arg_name = next(
+                    iter(
+                        p
+                        for p in sig.parameters
+                        if p not in action_kwargs and p != "self"
+                    ),
+                    None,
                 )
+                if first_arg_name:
+                    result = await registered_action.function(
+                        validated_params, **action_kwargs
+                    )
+                else:
+                    result = await registered_action.function(**action_kwargs)
+
             else:
                 result = await registered_action.function(**action_kwargs)
+
             if isinstance(result, ActionResult):
                 return result
             return (
@@ -702,15 +1476,17 @@ class Controller(Generic[Context]):
                 if isinstance(result, str)
                 else ActionResult()
             )
-        except PlaywrightTimeoutError:
-            logger.error(f"Timeout: {action_name}")
-            return ActionResult(error=f"Action '{action_name}' timed out.")
+        except PlaywrightTimeoutError as pte:
+            logger.error(f"Timeout executing action '{action_name}': {pte}")
+            return ActionResult(error=f"Action '{action_name}' timed out: {pte}")
         except PlaywrightError as e:
-            logger.error(f"Playwright error: {action_name}: {e}")
-            return ActionResult(error=f"Browser error: '{action_name}': {e}")
+            logger.error(f"Playwright error during action {action_name}: {e}")
+            return ActionResult(error=f"Browser error during '{action_name}': {e}")
         except ValidationError as e:
-            logger.error(f"Validation error: {action_name}: {e}")
-            return ActionResult(error=f"Invalid params for '{action_name}': {e}")
+            logger.error(
+                f"Validation error for action parameters of '{action_name}': {e}"
+            )
+            return ActionResult(error=f"Invalid parameters for '{action_name}': {e}")
         except Exception as e:
             logger.error(f"Error in action {action_name}: {e}", exc_info=True)
             return ActionResult(error=f"Unexpected error in '{action_name}': {e}")
@@ -754,11 +1530,13 @@ class MessageHistory(BaseModel):
         ):
             removed_msg = self.messages.pop()
             self.current_tokens -= removed_msg.metadata.tokens
+            logger.debug(
+                f"Removed last state message. Current tokens: {self.current_tokens}"
+            )
 
 
 class MessageManagerState(BaseModel):
     history: MessageHistory = Field(default_factory=MessageHistory)
-    tool_id: int = 1
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
@@ -777,9 +1555,8 @@ class AgentStepInfo:
     step_number: int
     max_steps: int
 
-
-def is_last_step(self) -> bool:
-    return self.step_number >= self.max_steps - 1
+    def is_last_step(self) -> bool:
+        return self.step_number >= self.max_steps - 1
 
 
 class MessageManager:
@@ -793,7 +1570,8 @@ class MessageManager:
         self.task = task
         self.settings = settings
         self.state = state or MessageManagerState()
-        self.system_prompt = system_message
+        self.system_prompt_message = system_message
+
         if not self.state.history.messages:
             self._init_messages()
 
@@ -809,8 +1587,10 @@ class MessageManager:
                 elif isinstance(item, dict) and item.get("type") == "image_url":
                     content_str += " [IMAGE] "
                     image_count += 1
-        if hasattr(message, "tool_calls") and message.tool_calls:
-            content_str += str(message.tool_calls)
+
+        if hasattr(message, "tool_calls") and message.tool_calls:  # type: ignore
+            content_str += str(message.tool_calls)  # type: ignore
+
         return (len(content_str) // self.settings.estimated_characters_per_token) + (
             image_count * self.settings.image_tokens
         )
@@ -822,18 +1602,21 @@ class MessageManager:
         message_type: Optional[str] = None,
     ):
         if self.settings.sensitive_data:
-            # Redaction logic as before
-            if isinstance(message.content, str):
-                temp_content = message.content
+            from copy import deepcopy
+
+            message_to_add = deepcopy(message)
+
+            if isinstance(message_to_add.content, str):
+                temp_content = message_to_add.content
                 for placeholder, real_value in self.settings.sensitive_data.items():
                     if real_value:
                         temp_content = temp_content.replace(
                             real_value, f"<secret>{placeholder}</secret>"
                         )
-                message.content = temp_content
-            elif isinstance(message.content, list):
+                message_to_add.content = temp_content
+            elif isinstance(message_to_add.content, list):
                 new_content_list = []
-                for item in message.content:
+                for item in message_to_add.content:
                     if isinstance(item, dict) and item.get("type") == "text":
                         temp_text = item["text"]
                         for (
@@ -847,18 +1630,21 @@ class MessageManager:
                         new_content_list.append({"type": "text", "text": temp_text})
                     else:
                         new_content_list.append(item)
-                message.content = new_content_list  # type: ignore
+                message_to_add.content = new_content_list  # type: ignore
+        else:
+            message_to_add = message
+
         self.state.history.add_message(
-            message,
+            message_to_add,
             MessageMetadata(
-                tokens=self._count_tokens(message), message_type=message_type
+                tokens=self._count_tokens(message_to_add), message_type=message_type
             ),
             position,
         )
         self._ensure_token_limit()
 
     def _init_messages(self):
-        self._add_message_with_tokens(self.system_prompt, message_type="init")
+        self._add_message_with_tokens(self.system_prompt_message, message_type="init")
         if self.settings.message_context:
             self._add_message_with_tokens(
                 HumanMessage(content=f"Context: {self.settings.message_context}"),
@@ -868,59 +1654,62 @@ class MessageManager:
             HumanMessage(content=f'Your ultimate task is: """{self.task}""".'),
             message_type="init",
         )
+
         if self.settings.sensitive_data:
             self._add_message_with_tokens(
                 HumanMessage(
-                    content=f"Sensitive data placeholders: {list(self.settings.sensitive_data.keys())}. Use them like <secret>placeholder_name</secret>"
+                    content=f"Sensitive data placeholders available: {list(self.settings.sensitive_data.keys())}. When you encounter these values in the page content, refer to them using <secret>placeholder_name</secret> format in your reasoning and output. Do not include the actual sensitive values in your responses."
                 ),
                 message_type="init",
             )
+
         example_current_state = {
-            "evaluation_previous_goal": "Success|Failed|Unknown...",
-            "memory": "Done X, Y remains...",
-            "next_goal": "Do Z",
+            "evaluation_previous_goal": "Briefly evaluate previous action (Success/Failed/Unknown, and why).",
+            "memory": "Summarize what has been done and what critical information was found so far relevant to the main task.",
+            "next_goal": "Clearly state the immediate next sub-goal or question to address.",
         }
-        example_action_list = [{"one_action_name": {"parameter_name": "value"}}]
-        example_args = {
+        example_action_list = [
+            {"one_action_name": {"parameter_name": "value"}},
+        ]
+        example_agent_output_args = {
             "current_state": example_current_state,
             "action": example_action_list,
         }
         self._add_message_with_tokens(
             HumanMessage(
-                content=f"Example AgentOutput JSON:\n```json\n{json.dumps(example_args, indent=2)}\n```"
+                content=f"You must respond with a single tool call to 'AgentOutput'. The arguments to this tool call must be a JSON object matching this structure:\n```json\n{json.dumps(example_agent_output_args, indent=2)}\n```\nAlways provide the `current_state` and at least one `action` in the `action` list."
             ),
             message_type="init",
         )
 
-        # Ensure example_tool_call_id is short enough
-        example_tool_call_id = (
-            f"ex-{str(uuid.uuid4())[:30]}"  # Approx 33 chars, well within 40
-        )
-
+        example_tool_call_id = f"call_ex_{str(uuid.uuid4())[:8]}"
         example_ai_msg = AIMessage(
-            content="Performing action.",
+            content="Okay, I will perform the action based on the provided state.",
             tool_calls=[
                 {
                     "id": example_tool_call_id,
                     "name": "AgentOutput",
-                    "args": example_args,
+                    "args": example_agent_output_args,
                 }
             ],
         )
         self._add_message_with_tokens(example_ai_msg, message_type="init")
+
         self.add_tool_message(
-            content="Example processed.",
+            content="Example action processed. The page updated, and new elements are now visible.",
             tool_call_id=example_tool_call_id,
             message_type="init",
         )
+
         self._add_message_with_tokens(
-            HumanMessage(content="[Task history memory starts here]"),
+            HumanMessage(content="[Task-specific conversation history begins now.]"),
             message_type="init",
         )
+
         if self.settings.available_file_paths:
             self._add_message_with_tokens(
                 HumanMessage(
-                    content=f"Available files: {self.settings.available_file_paths}"
+                    content=f"You have access to these local files if needed by an action: {self.settings.available_file_paths}"
                 ),
                 message_type="init",
             )
@@ -929,7 +1718,7 @@ class MessageManager:
         self.task = new_task
         self._add_message_with_tokens(
             HumanMessage(
-                content=f'New task: """{new_task}""". Consider previous context.'
+                content=f'The task has been updated. New task: """{new_task}""". Please consider the previous conversation history as relevant context for this new task.'
             )
         )
 
@@ -940,37 +1729,54 @@ class MessageManager:
         step_info: Optional[AgentStepInfo] = None,
         use_vision=True,
     ):
+        result_summary_parts = []
         if result:
-            for r_item in result:
+            for i, r_item in enumerate(result):
                 if r_item.include_in_memory:
                     if r_item.extracted_content:
-                        self._add_message_with_tokens(
-                            HumanMessage(
-                                content="Prior Action result: "
-                                + str(r_item.extracted_content)
-                            )
+                        result_summary_parts.append(
+                            f"Result of prior action {i + 1}: {str(r_item.extracted_content)[:200]}"
                         )
                     if r_item.error:
-                        self._add_message_with_tokens(
-                            HumanMessage(
-                                content="Prior Action error: "
-                                + r_item.error.split("\n")[-1]
-                            )
+                        result_summary_parts.append(
+                            f"Error from prior action {i + 1}: ...{r_item.error.splitlines()[-1][:200]}"
                         )
-            result = None
-        assert browser_state_summary is not None
-        state_message = AgentMessagePrompt(
+
+        result_prefix = ""
+        if result_summary_parts:
+            result_prefix = (
+                "[Prior Action Results]\n" + "\n".join(result_summary_parts) + "\n\n"
+            )
+
+        assert browser_state_summary is not None, (
+            "BrowserStateSummary cannot be None when adding state message"
+        )
+
+        agent_message_prompt = AgentMessagePrompt(
             browser_state_summary=browser_state_summary,
-            result=result,
+            result=None,
             include_attributes=self.settings.include_attributes,
             step_info=step_info,
-        ).get_user_message(use_vision)
-        self._add_message_with_tokens(state_message)
+        )
+        state_desc_text = agent_message_prompt.get_user_message_text_part()
 
-    def add_model_output(
-        self, model_output: "AgentOutput", tool_call_id: str
-    ):  # Expect tool_call_id
-        # This method now assumes tool_call_id is passed from Agent.get_next_action's AIMessage
+        full_state_description = result_prefix + state_desc_text
+
+        if browser_state_summary.screenshot and use_vision:
+            content_list = [
+                {"type": "text", "text": full_state_description},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{browser_state_summary.screenshot}"
+                    },
+                },
+            ]
+            self._add_message_with_tokens(HumanMessage(content=content_list))  # type: ignore
+        else:
+            self._add_message_with_tokens(HumanMessage(content=full_state_description))
+
+    def add_model_output(self, model_output: "AgentOutput", tool_call_id: str):
         tool_calls = [
             {
                 "id": tool_call_id,
@@ -978,7 +1784,9 @@ class MessageManager:
                 "args": model_output.model_dump(exclude_unset=True, exclude_none=True),
             }
         ]
-        ai_message = AIMessage(content="", tool_calls=tool_calls)
+        content = "Okay, proceeding with the determined action(s)."
+
+        ai_message = AIMessage(content=content, tool_calls=tool_calls)  # type: ignore
         self._add_message_with_tokens(ai_message)
 
     def add_tool_message(
@@ -986,7 +1794,6 @@ class MessageManager:
     ):
         tool_message = ToolMessage(content=content, tool_call_id=tool_call_id)
         self._add_message_with_tokens(tool_message, message_type=message_type)
-        # self.state.tool_id += 1 # Incrementing tool_id is now implicitly handled by AIMessage's tool_call_id generation
 
     def get_messages(self) -> List[BaseMessage]:
         return [m.message for m in self.state.history.messages]
@@ -997,49 +1804,45 @@ class MessageManager:
             for mc in self.state.history.messages
             if mc.metadata.message_type == "init"
         )
+
         while (
             self.state.history.current_tokens > self.settings.max_input_tokens
             and len(self.state.history.messages) > min_messages_to_keep
         ):
-            removed = False
+            removed_message = False
             for i in range(len(self.state.history.messages)):
                 if self.state.history.messages[i].metadata.message_type != "init":
-                    # Logic to avoid removing an AIMessage without its corresponding ToolMessage
                     current_msg_container = self.state.history.messages[i]
-                    is_ai_expecting_tool = False
                     if (
                         isinstance(current_msg_container.message, AIMessage)
                         and current_msg_container.message.tool_calls
                     ):
-                        expected_tc_id = current_msg_container.message.tool_calls[
-                            0
-                        ].get("id")
-                        if i + 1 < len(self.state.history.messages):
-                            next_msg_container = self.state.history.messages[i + 1]
-                            if (
-                                isinstance(next_msg_container.message, ToolMessage)
-                                and next_msg_container.message.tool_call_id
-                                == expected_tc_id
-                            ):
-                                is_ai_expecting_tool = True  # It has its tool message
-                        else:  # It's the last message, so it's expecting one
-                            is_ai_expecting_tool = True
+                        if i + 1 >= len(self.state.history.messages) or not (
+                            isinstance(
+                                self.state.history.messages[i + 1].message, ToolMessage
+                            )
+                            and self.state.history.messages[i + 1].message.tool_call_id
+                            == current_msg_container.message.tool_calls[0].get("id")
+                        ):  # type: ignore
+                            logger.debug(
+                                f"Skipping removal of AIMessage at index {i} as its ToolMessage is missing or not next."
+                            )
+                            continue
 
-                    if not is_ai_expecting_tool or (
-                        is_ai_expecting_tool
-                        and i + 1 < len(self.state.history.messages)
-                    ):  # If it's expecting but not last, or not expecting
-                        removed_msg_container = self.state.history.messages.pop(i)
-                        self.state.history.current_tokens -= (
-                            removed_msg_container.metadata.tokens
-                        )
-                        logger.info(
-                            f"Removed message (type: {removed_msg_container.metadata.message_type}, content: {str(removed_msg_container.message.content)[:50]}...) for token limit. Current: {self.state.history.current_tokens}"
-                        )
-                        removed = True
-                        break
-            if not removed:
-                logger.warning("Could not remove messages to reduce token count.")
+                    removed_msg_container = self.state.history.messages.pop(i)
+                    self.state.history.current_tokens -= (
+                        removed_msg_container.metadata.tokens
+                    )
+                    logger.info(
+                        f"Token limit exceeded. Removed message (type: {removed_msg_container.metadata.message_type}, content: '{str(removed_msg_container.message.content)[:50]}...') New token count: {self.state.history.current_tokens}"
+                    )
+                    removed_message = True
+                    break
+
+            if not removed_message:
+                logger.warning(
+                    f"Could not reduce token count further. Remaining messages: {len(self.state.history.messages)}, Current tokens: {self.state.history.current_tokens}. This might lead to issues."
+                )
                 break
 
     def cut_messages(self):
@@ -1047,27 +1850,58 @@ class MessageManager:
 
 
 BROWSER_USE_SYSTEM_PROMPT_TEMPLATE = """
-You are an AI agent ...
-Available actions:
+You are a proficient AI agent designed to interact with web pages based on user tasks.
+Your goal is to understand the current state of a web page and decide the best next action(s) to achieve the user's objective.
+
+You will be provided with:
+1.  The current URL and title of the page.
+2.  A list of currently open tabs.
+3.  A textual representation of interactive elements on the page, each with an index.
+4.  A screenshot of the current page (if vision is enabled).
+5.  The results or errors from your previous action(s).
+
+Your response MUST be a single tool call to the 'AgentOutput' tool.
+The arguments for 'AgentOutput' must be a JSON object with two main keys:
+    -   "current_state": An object containing your analysis of the current situation.
+        -   "evaluation_previous_goal": Briefly evaluate the outcome of your last action(s) (e.g., "Success, found the item", "Failed, element not interactable", "Unknown, page loaded but need to verify").
+        -   "memory": Concisely summarize what has been achieved so far and any critical information gathered that is relevant to the overall task. This helps maintain context.
+        -   "next_goal": Clearly state your immediate next sub-goal or the question you are trying to answer with the next action(s).
+    -   "action": A list of one or more actions to be performed. Each action in the list is an object with a single key, where the key is the action name and the value is an object of its parameters.
+
+Available actions (use these as keys in the "action" list items):
 {action_description}
-"""  # Same as before
+
+General Guidelines:
+-   Be methodical. Break down complex tasks into smaller, manageable steps.
+-   If a page is long, use scroll actions to explore. Elements not visible in the screenshot might require scrolling.
+-   If an action fails, analyze the error and the current page state to decide on a recovery action or a different approach.
+-   Pay attention to element indices. Use the correct index for the element you intend to interact with.
+-   If the task requires extracting specific information, use the 'extract_content' action with a clear goal.
+-   When the task is fully completed, use the 'done' action. Set 'success' to true if the task was achieved, or false if it could not be completed as requested. Provide a summary in the 'text' field of the 'done' action.
+-   You can perform up to {max_actions_per_step} actions in a single step if it makes sense (e.g., typing then clicking submit). List them sequentially in the "action" list.
+-   If elements are not found, consider if the page is still loading, if you need to scroll, or if the previous action led to an unexpected page.
+"""
 
 
 class SystemPrompt:
     def __init__(
         self,
         action_description: str,
-        max_actions_per_step: int = 20,
+        max_actions_per_step: int = 3,
         override_system_message: Optional[str] = None,
         extend_system_message: Optional[str] = None,
     ):
-        prompt = override_system_message or BROWSER_USE_SYSTEM_PROMPT_TEMPLATE.format(
-            max_actions_per_step=max_actions_per_step,
-            action_description=action_description,
+        prompt_content = (
+            override_system_message
+            or BROWSER_USE_SYSTEM_PROMPT_TEMPLATE.format(
+                action_description=action_description,
+                max_actions_per_step=max_actions_per_step,
+            )
         )
         if extend_system_message:
-            prompt += f"\n{extend_system_message}"
-        self.system_message = SystemMessage(content=prompt)
+            prompt_content += f"\n{extend_system_message}"
+
+        self.system_message = SystemMessage(content=prompt_content)
 
     def get_system_message(self) -> SystemMessage:
         return self.system_message
@@ -1085,58 +1919,75 @@ class AgentMessagePrompt:
         self.result = result
         self.include_attributes = include_attributes or []
         self.step_info = step_info
-        assert self.state is not None
+        assert self.state is not None, "BrowserStateSummary cannot be None"
 
-    def get_user_message(self, use_vision: bool = True) -> HumanMessage:
+    def get_user_message_text_part(self) -> str:
         elements_text = (
-            self.state.element_tree.clickable_elements_to_string(
+            self.state.clickable_elements_to_string(
                 include_attributes=self.include_attributes
             )
-            if self.state.element_tree
-            else ""
+            if self.state.element_tree or self.state.selector_map
+            else "No interactive elements data available or empty page."
         )
-        has_content_above = (self.state.pixels_above or 0) > 0
-        has_content_below = (self.state.pixels_below or 0) > 0
-        if elements_text.strip():
-            elements_text = (
-                f"... {self.state.pixels_above} px above ...\n{elements_text}"
-                if has_content_above
-                else f"[Start of page]\n{elements_text}"
-            )
-            elements_text = (
-                f"{elements_text}\n... {self.state.pixels_below} px below ..."
-                if has_content_below
-                else f"{elements_text}\n[End of page]"
+
+        has_content_above = (self.state.pixels_above or 0) > 50
+        has_content_below = (self.state.pixels_below or 0) > 50
+
+        scroll_info = []
+        if has_content_above:
+            scroll_info.append(
+                f"... Content continues for approx. {self.state.pixels_above}px above ..."
             )
         else:
-            elements_text = "No interactive elements or empty page."
-        step_info_desc = (
-            f"Step: {self.step_info.step_number + 1}/{self.step_info.max_steps}. "
-            if self.step_info
-            else ""
+            scroll_info.append("[Top of viewable page area]")
+
+        if has_content_below:
+            scroll_info.append(
+                f"... Content continues for approx. {self.state.pixels_below}px below ..."
+            )
+        else:
+            scroll_info.append("[Bottom of viewable page area]")
+
+        elements_text_with_scroll = (
+            f"{scroll_info[0]}\n{elements_text}\n{scroll_info[1]}"
         )
-        step_info_desc += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+        step_info_desc = ""
+        if self.step_info:
+            step_info_desc = f"Current Step: {self.step_info.step_number + 1} of {self.step_info.max_steps}. "
+        step_info_desc += (
+            f"Current Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
         tabs_fmt = (
             "\n".join(
                 [
-                    f"- T{t.page_id}: '{t.title[:40]}' ({t.url[:50]})"
+                    f"- Tab {t.get('page_id', 'N/A')}: '{str(t.get('title', 'No Title'))[:40]}' ({str(t.get('url', 'No URL'))[:50]})"
                     for t in self.state.tabs
                 ]
             )
             if self.state.tabs
-            else "No tabs."
+            else "No other tabs open or tab information unavailable."
         )
-        state_desc = f"\n[Task History Ends]\n[Current State]\nURL: {self.state.url}\nTabs:\n{tabs_fmt}\nInteractive Elements:\n{elements_text}\n{step_info_desc}\n"
-        if self.result:
-            for i, res in enumerate(self.result):
-                if res.extracted_content:
-                    state_desc += f"\nRes {i + 1}: {str(res.extracted_content)[:300]}"
-                if res.error:
-                    state_desc += f"\nErr {i + 1}: ...{res.error.splitlines()[-1]}"
+
+        state_desc = (
+            f"\n[End of Prior Action Results]\n\n[Current Page State]\n"
+            f"URL: {self.state.url}\n"
+            f"Title: {self.state.title}\n"
+            f"Open Tabs:\n{tabs_fmt}\n\n"
+            f"Interactive Elements Visible on Page (scroll if not listed):\n{elements_text_with_scroll}\n\n"
+            f"{step_info_desc}\n"
+            f"Please provide your 'current_state' analysis and next 'action'(s)."
+        )
+        return state_desc
+
+    def get_user_message(self, use_vision: bool = True) -> HumanMessage:
+        state_desc_text = self.get_user_message_text_part()
+
         if self.state.screenshot and use_vision:
             return HumanMessage(
                 content=[
-                    {"type": "text", "text": state_desc},
+                    {"type": "text", "text": state_desc_text},
                     {
                         "type": "image_url",
                         "image_url": {
@@ -1145,19 +1996,32 @@ class AgentMessagePrompt:
                     },
                 ]
             )
-        return HumanMessage(content=state_desc)
+        else:
+            return HumanMessage(content=state_desc_text)
 
 
 class AgentBrain(BaseModel):
-    evaluation_previous_goal: str
-    memory: str
-    next_goal: str
+    evaluation_previous_goal: str = Field(
+        ...,
+        description="Brief evaluation of the last action's outcome (Success/Failed/Unknown, and key reason/observation).",
+    )
+    memory: str = Field(
+        ...,
+        description="Concise summary of progress towards the main task and critical info found so far.",
+    )
+    next_goal: str = Field(
+        ..., description="The immediate, specific sub-goal for the next action(s)."
+    )
 
 
 class AgentOutput(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    current_state: AgentBrain
-    action: List[ActionModel] = Field(..., min_length=1)
+    current_state: AgentBrain = Field(
+        ..., description="Agent's analysis of the current situation."
+    )
+    action: List[ActionModel] = Field(
+        ..., min_length=1, description="List of one or more actions to perform."
+    )
 
     @staticmethod
     def type_with_custom_actions(
@@ -1183,7 +2047,7 @@ class AgentSettings(BaseModel):
     message_context: Optional[str] = None
     generate_gif: Union[bool, str] = False
     available_file_paths: Optional[List[str]] = None
-    max_actions_per_step: int = 5
+    max_actions_per_step: int = 3
     tool_calling_method: Optional[
         Literal["function_calling", "json_mode", "raw", "auto", "tools"]
     ] = "auto"
@@ -1198,7 +2062,7 @@ class AgentSettings(BaseModel):
 
 class AgentState(BaseModel):
     agent_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    n_steps: int = 1
+    n_steps: int = 0
     consecutive_failures: int = 0
     last_result: Optional[List[ActionResult]] = None
     history: "AgentHistoryList" = Field(
@@ -1267,30 +2131,51 @@ class Agent(Generic[Context]):
         self.llm = llm
         self.controller = controller or Controller()
         self.sensitive_data = sensitive_data
-        self.version = "main.py-refactored-0.7"
+        self.version = "main.py-refactored-0.8"
         self.settings = agent_settings or AgentSettings()
         self.state = injected_agent_state or AgentState()
+
         self.browser_session = browser_session or BrowserSession(
             browser_profile=(browser_profile or DEFAULT_BROWSER_PROFILE)
         )
         self.context = context
+
         self.ActionModelType = self.controller.registry.create_action_model()
         self.AgentOutputType = AgentOutput.type_with_custom_actions(
             self.ActionModelType
         )
+
         self.initial_actions = (
             self._convert_initial_actions(initial_actions) if initial_actions else None
         )
+
         self.tool_calling_method = self.settings.tool_calling_method
         if self.tool_calling_method == "auto":
-            self.tool_calling_method = "tools"
+            if (
+                "openai" in self.llm.__class__.__name__.lower()
+                or "azure" in self.llm.__class__.__name__.lower()
+            ):
+                self.tool_calling_method = "tools"
+            elif "anthropic" in self.llm.__class__.__name__.lower():
+                self.tool_calling_method = "tools"
+            elif "google" in self.llm.__class__.__name__.lower():
+                self.tool_calling_method = "tools"
+            else:
+                logger.warning(
+                    f"Tool calling method 'auto' for {self.llm.__class__.__name__}, defaulting to 'tools'. May need explicit setting."
+                )
+                self.tool_calling_method = "tools"
+
         if not hasattr(self.llm, "bind_tools") and self.tool_calling_method not in [
             "raw",
             None,
+            "json_mode",
         ]:
             logger.warning(
-                f"LLM {self.llm.__class__.__name__} may not support bind_tools with method '{self.tool_calling_method}'."
+                f"LLM {self.llm.__class__.__name__} may not support bind_tools with method '{self.tool_calling_method}'. "
+                "Tool calling might fail. Consider 'raw' or 'json_mode' if issues arise."
             )
+
         active_bp = self.browser_session.browser_profile
         msg_mgr_settings = MessageManagerSettings(
             max_input_tokens=self.settings.max_input_tokens,
@@ -1299,113 +2184,182 @@ class Agent(Generic[Context]):
             sensitive_data=self.sensitive_data,
             available_file_paths=self.settings.available_file_paths,
         )
+
         sys_prompt_obj = SystemPrompt(
             action_description=self.controller.registry.get_prompt_description(),
             max_actions_per_step=self.settings.max_actions_per_step,
             override_system_message=self.settings.override_system_message,
             extend_system_message=self.settings.extend_system_message,
         )
+
         self._message_manager = MessageManager(
             task=task,
             system_message=sys_prompt_obj.get_system_message(),
             settings=msg_mgr_settings,
             state=self.state.message_manager_state,
         )
+
         self._external_pause_event = asyncio.Event()
         self._external_pause_event.set()
 
     def _convert_initial_actions(
         self, actions: List[Dict[str, Dict[str, Any]]]
     ) -> List[ActionModel]:
-        return [
-            self.ActionModelType(**ad)
-            for ad in actions
-            if self._validate_initial_action(ad)
-        ]
+        converted = []
+        for action_dict in actions:
+            if self._validate_initial_action(action_dict):
+                try:
+                    action_name = list(action_dict.keys())[0]
+                    action_params = action_dict[action_name]
+
+                    action_instance_params = {action_name: action_params}
+                    converted.append(self.ActionModelType(**action_instance_params))
+                except (ValidationError, IndexError, TypeError) as e:
+                    logger.error(f"Error converting initial action {action_dict}: {e}")
+            else:
+                logger.warning(f"Skipping invalid initial action: {action_dict}")
+        return converted
 
     def _validate_initial_action(self, action_dict: Dict[str, Dict[str, Any]]) -> bool:
+        if not isinstance(action_dict, dict) or len(action_dict) != 1:
+            logger.error(
+                f"Initial action format error: Each action must be a dict with a single key (action_name). Got: {action_dict}"
+            )
+            return False
+        action_name = list(action_dict.keys())[0]
+        if action_name not in self.controller.registry.actions:
+            logger.error(
+                f"Initial action '{action_name}' not found in registered actions."
+            )
+            return False
+
+        param_model = self.controller.registry.actions[action_name].param_model
+        action_params = action_dict[action_name]
         try:
-            self.ActionModelType(**action_dict)
+            param_model(**action_params)
             return True
         except ValidationError as e:
-            logger.error(f"Failed to validate initial action {action_dict}: {e}")
+            logger.error(
+                f"Failed to validate parameters for initial action '{action_name}': {e}. Params: {action_params}"
+            )
             return False
 
     async def get_next_action(
         self, input_messages: List[BaseMessage]
-    ) -> Tuple[AgentOutput, Optional[str]]:  # Return tool_call_id
-        llm_with_tool = self.llm
-        tool_call_id_from_llm = None
+    ) -> Tuple[AgentOutput, Optional[str]]:
+        llm_to_invoke = self.llm
+        tool_call_id_from_llm: Optional[str] = None
+
+        agent_output_tool_name = self.AgentOutputType.__name__
+
         try:
             if self.tool_calling_method in ["tools", "function_calling"]:
-                llm_with_tool = self.llm.bind_tools(
+                llm_to_invoke = self.llm.bind_tools(
                     tools=[self.AgentOutputType],
                     tool_choice={
                         "type": "function",
-                        "function": {"name": self.AgentOutputType.__name__},
+                        "function": {"name": agent_output_tool_name},
                     },
                 )
+            elif self.tool_calling_method == "json_mode":
+                llm_to_invoke = self.llm.with_structured_output(
+                    self.AgentOutputType, method="json_mode", include_raw=True
+                )  # type: ignore
+
         except Exception as e:
             logger.error(
-                f"Failed to configure LLM for tool calling with method '{self.tool_calling_method}': {e}"
+                f"Failed to configure LLM for tool/structured output with method '{self.tool_calling_method}': {e}"
             )
 
-        raw_response: AIMessage = await llm_with_tool.ainvoke(input_messages)  # type: ignore
-        model_output: AgentOutput
+        raw_response_message: BaseMessage = await llm_to_invoke.ainvoke(input_messages)  # type: ignore
+        model_output_obj: AgentOutput
 
         if (
-            self.tool_calling_method in ["tools", "function_calling"]
-            and hasattr(raw_response, "tool_calls")
-            and raw_response.tool_calls
-        ):
-            tool_call = raw_response.tool_calls[0]
-            tool_call_id_from_llm = tool_call.get("id")  # Get ID from AIMessage
-            tool_name = tool_call.get("name")
-            args = tool_call.get("args")
-            if (
-                not tool_name
-                or tool_name.lower() != self.AgentOutputType.__name__.lower()
-            ):
-                raise ValueError(f"LLM called unexpected tool: {tool_name}")
-            try:
-                model_output = self.AgentOutputType(
-                    **(json.loads(args) if isinstance(args, str) else args)
-                )
-            except (json.JSONDecodeError, ValidationError) as e:
-                logger.error(
-                    f"Failed to parse/validate AgentOutput from tool args: {e}. Args: {args}"
-                )
-                raise
-        elif isinstance(raw_response.content, str):
-            try:
-                content_str = raw_response.content.strip()
-                if content_str.startswith("```json"):
-                    content_str = content_str[7:]
-                if content_str.endswith("```"):
-                    content_str = content_str[:-3]
-                model_output = self.AgentOutputType(**json.loads(content_str.strip()))
-            except (json.JSONDecodeError, ValidationError) as e:
-                logger.error(
-                    f"Failed to parse LLM content as AgentOutput: {e}. Content: {raw_response.content}"
-                )
-                raise
-        else:
-            raise ValueError(f"LLM response unexpected format: {raw_response}")
+            hasattr(raw_response_message, "tool_calls")
+            and raw_response_message.tool_calls
+        ):  # type: ignore
+            tool_call = raw_response_message.tool_calls[0]  # type: ignore
+            tool_call_id_from_llm = tool_call.get("id")
+            called_tool_name = tool_call.get("name")
+            raw_args = tool_call.get("args")
 
-        log_response(model_output)
-        return model_output, tool_call_id_from_llm
+            if called_tool_name != agent_output_tool_name:
+                raise ValueError(
+                    f"LLM called unexpected tool: '{called_tool_name}'. Expected '{agent_output_tool_name}'."
+                )
+
+            try:
+                args_dict = (
+                    json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                )
+                model_output_obj = self.AgentOutputType(**args_dict)
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.error(
+                    f"Failed to parse/validate AgentOutput from tool args: {e}. Raw Args: {raw_args}"
+                )
+                raise ValueError(
+                    f"Invalid arguments for tool '{agent_output_tool_name}': {e}. Args: {raw_args}"
+                ) from e
+
+        elif (
+            self.tool_calling_method == "json_mode"
+            and isinstance(raw_response_message, dict)
+            and "parsed" in raw_response_message
+        ):
+            if isinstance(raw_response_message["parsed"], self.AgentOutputType):
+                model_output_obj = raw_response_message["parsed"]
+            else:
+                raw_content_for_fallback = raw_response_message.get("raw", {}).get(
+                    "content", ""
+                )
+                try:
+                    model_output_obj = self.AgentOutputType(
+                        **json.loads(raw_content_for_fallback)
+                    )
+                except (json.JSONDecodeError, ValidationError) as e:
+                    logger.error(
+                        f"Fallback JSON parsing failed for json_mode: {e}. Raw content: {raw_content_for_fallback}"
+                    )
+                    raise ValueError(f"Could not parse json_mode output: {e}") from e
+
+        elif isinstance(raw_response_message.content, str):
+            content_str = raw_response_message.content.strip()
+            if content_str.startswith("```json"):
+                content_str = content_str[7:]
+            if content_str.endswith("```"):
+                content_str = content_str[:-3]
+            content_str = content_str.strip()
+            try:
+                model_output_obj = self.AgentOutputType(**json.loads(content_str))
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.error(
+                    f"Failed to parse LLM string content as AgentOutput: {e}. Content: {raw_response_message.content}"
+                )
+                raise ValueError(
+                    f"LLM response content could not be parsed into AgentOutput structure: {e}. Content: {content_str}"
+                ) from e
+        else:
+            raise ValueError(
+                f"LLM response in unexpected format: {type(raw_response_message)}. Full response: {raw_response_message}"
+            )
+
+        log_response(model_output_obj)
+        return model_output_obj, tool_call_id_from_llm
 
     async def multi_act(self, actions: List[ActionModel]) -> List[ActionResult]:
         results: List[ActionResult] = []
+
         initial_hashes_url = None
         initial_hashes_set = set()
-        if self.browser_session._cached_clickable_element_hashes:
-            initial_hashes_url = (
-                self.browser_session._cached_clickable_element_hashes.url
-            )
-            initial_hashes_set = (
-                self.browser_session._cached_clickable_element_hashes.hashes
-            )
+        if self.browser_session._cached_browser_state_summary:
+            initial_hashes_url = self.browser_session._cached_browser_state_summary.url
+            if self.browser_session._cached_clickable_element_hashes:
+                initial_hashes_set = (
+                    self.browser_session._cached_clickable_element_hashes.get(
+                        "hashes", set()
+                    )
+                )
+
         for i, action_model_instance in enumerate(actions):
             if self.state.stopped:
                 results.append(
@@ -1415,6 +2369,7 @@ class Agent(Generic[Context]):
                     )
                 )
                 break
+
             current_action_model = action_model_instance
             if not isinstance(current_action_model, self.ActionModelType):
                 if isinstance(current_action_model, dict):
@@ -1423,20 +2378,18 @@ class Agent(Generic[Context]):
                             **current_action_model
                         )  # type: ignore
                     except ValidationError as e:
-                        results.append(
-                            ActionResult(
-                                error=f"Invalid action structure for action {i}: {e}"
-                            )
-                        )
+                        error_msg = f"Invalid action structure for action {i + 1} in sequence: {e}. Action data: {current_action_model}"
+                        logger.error(error_msg)
+                        results.append(ActionResult(error=error_msg))
                         break
                 else:
-                    results.append(
-                        ActionResult(
-                            error=f"Action {i} is not a valid ActionModel or dictionary."
-                        )
-                    )
+                    error_msg = f"Action {i + 1} in sequence is not a valid ActionModel or dictionary. Got type: {type(current_action_model)}"
+                    logger.error(error_msg)
+                    results.append(ActionResult(error=error_msg))
                     break
+
             page_extraction_llm = self.settings.page_extraction_llm or self.llm
+
             result = await self.controller.act(
                 action=current_action_model,
                 browser_session=self.browser_session,
@@ -1446,8 +2399,10 @@ class Agent(Generic[Context]):
                 context=self.context,
             )
             results.append(result)
+
             if result.is_done or result.error:
                 break
+
             if (
                 i < len(actions) - 1
                 and self.settings.interrupt_on_page_change_in_multi_act
@@ -1455,108 +2410,166 @@ class Agent(Generic[Context]):
                 await asyncio.sleep(
                     self.browser_session.browser_profile.wait_between_actions / 2
                 )
-                fresh_state_summary = await self.browser_session.get_state_summary(
-                    cache_clickable_elements_hashes=True
-                )
-                current_url_after_action = fresh_state_summary.url
-                new_hashes = (
-                    self.browser_session._cached_clickable_element_hashes.hashes
-                    if self.browser_session._cached_clickable_element_hashes
-                    else set()
-                )
-                url_changed = current_url_after_action != initial_hashes_url
-                dom_changed = not url_changed and new_hashes != initial_hashes_set
-                if url_changed:
-                    logger.info(
-                        f"URL changed from '{initial_hashes_url}' to '{current_url_after_action}', interrupting multi_act."
+
+                try:
+                    fresh_state_summary = await self.browser_session.get_state_summary(
+                        cache_clickable_elements_hashes=True
                     )
-                    break
-                if dom_changed:
-                    logger.info(
-                        f"DOM changed on '{initial_hashes_url}', interrupting multi_act."
+                    current_url_after_action = fresh_state_summary.url
+                    new_hashes = (
+                        self.browser_session._cached_clickable_element_hashes.get(
+                            "hashes", set()
+                        )
+                        if self.browser_session._cached_clickable_element_hashes
+                        else set()
                     )
-                    break
-                initial_hashes_url = current_url_after_action
-                initial_hashes_set = new_hashes
-            if i == len(actions) - 1:
+
+                    url_changed = current_url_after_action != initial_hashes_url
+                    dom_significantly_changed = (
+                        not url_changed and new_hashes != initial_hashes_set
+                    ) or (url_changed and new_hashes != initial_hashes_set)
+
+                    if url_changed:
+                        logger.info(
+                            f"URL changed from '{initial_hashes_url}' to '{current_url_after_action}' after action {i + 1}. Interrupting multi-action step for re-evaluation."
+                        )
+                        results.append(
+                            ActionResult(
+                                extracted_content="Page URL changed, re-evaluating.",
+                                include_in_memory=True,
+                            )
+                        )
+                        break
+                    if dom_significantly_changed:
+                        logger.info(
+                            f"DOM structure significantly changed on URL '{initial_hashes_url}' after action {i + 1}. Interrupting multi-action step for re-evaluation."
+                        )
+                        results.append(
+                            ActionResult(
+                                extracted_content="DOM changed, re-evaluating.",
+                                include_in_memory=True,
+                            )
+                        )
+                        break
+
+                    initial_hashes_url = current_url_after_action
+                    initial_hashes_set = new_hashes
+
+                except Exception as e:
+                    logger.warning(
+                        f"Error during DOM change check in multi_act: {e}. Continuing with next action."
+                    )
+
+            if i < len(actions) - 1:
                 await asyncio.sleep(
                     self.browser_session.browser_profile.wait_between_actions
                 )
         return results
 
     async def _handle_step_error(self, error: Exception) -> List[ActionResult]:
-        error_msg = str(error)
-        logger.error(f"Step failed: {error_msg}", exc_info=True)
+        error_msg = f"{type(error).__name__}: {str(error)}"
+        logger.error(f"Step execution failed: {error_msg}", exc_info=True)
         self.state.consecutive_failures += 1
         return [ActionResult(error=error_msg, include_in_memory=True)]
 
     async def step(self, step_info: Optional[AgentStepInfo] = None):
+        self.state.n_steps += 1
         logger.info(f"--- Step {self.state.n_steps} ---")
-        browser_state_summary = None
-        model_output: Optional[AgentOutput] = None
-        result: List[ActionResult] = []
-        tool_call_id_for_step: Optional[str] = None  # Initialize here
+
+        browser_state_summary: Optional[BrowserStateSummary] = None
+        model_decision_output: Optional[AgentOutput] = None
+        action_execution_results: List[ActionResult] = []
+        tool_call_id_for_this_step: Optional[str] = None
+
         try:
             if not self.browser_session.initialized:
                 await self.browser_session.start()
-            browser_state_summary = await self.browser_session.get_state_summary()
+
+            browser_state_summary = await self.browser_session.get_state_summary(
+                cache_clickable_elements_hashes=True
+            )
+
             self._message_manager.add_state_message(
                 browser_state_summary=browser_state_summary,
                 result=self.state.last_result,
                 step_info=step_info,
                 use_vision=self.settings.use_vision,
             )
-            input_messages = self._message_manager.get_messages()
 
-            model_output, tool_call_id_for_step = await self.get_next_action(
-                input_messages
-            )  # Unpack
+            input_messages_for_llm = self._message_manager.get_messages()
+
+            (
+                model_decision_output,
+                tool_call_id_for_this_step,
+            ) = await self.get_next_action(input_messages_for_llm)
 
             self._message_manager.state.history.remove_last_state_message()
-            # Pass the tool_call_id from the AIMessage to add_model_output so it can be used for the ToolMessage
-            if tool_call_id_for_step:
-                self._message_manager.add_model_output(
-                    model_output, tool_call_id_for_step
-                )
-            else:  # Should not happen if tool calling is used and successful
-                logger.warning(
-                    "No tool_call_id received from get_next_action, AIMessage might not be correctly formatted for tool call."
-                )
-                # Fallback: create a new ID for the AIMessage itself if one wasn't part of the LLM response structure.
-                # This part might need more sophisticated handling depending on how non-tool_call scenarios are structured.
-                fallback_tc_id = f"gen_tc_{self.state.n_steps}_{uuid.uuid4()}"[:40]
-                self._message_manager.add_model_output(model_output, fallback_tc_id)
-                tool_call_id_for_step = fallback_tc_id
 
-            result = await self.multi_act(model_output.action)
-            self.state.last_result = result
+            if model_decision_output and tool_call_id_for_this_step:
+                self._message_manager.add_model_output(
+                    model_decision_output, tool_call_id_for_this_step
+                )
+            elif model_decision_output:
+                fallback_tc_id = f"ftc_{self.state.n_steps}_{str(uuid.uuid4())[:4]}"
+                self._message_manager.add_model_output(
+                    model_decision_output, fallback_tc_id
+                )
+                tool_call_id_for_this_step = fallback_tc_id
+                logger.warning(
+                    "Model output processed without a tool_call_id from LLM, using fallback."
+                )
+
+            if model_decision_output and model_decision_output.action:
+                action_execution_results = await self.multi_act(
+                    model_decision_output.action
+                )
+            else:
+                logger.warning("LLM decided no actions or action list was empty.")
+                action_execution_results = [
+                    ActionResult(
+                        error="LLM provided no actions.", include_in_memory=True
+                    )
+                ]
+
+            self.state.last_result = action_execution_results
             self.state.consecutive_failures = 0
 
-            if (
-                tool_call_id_for_step
-            ):  # Use the ID from the AIMessage for the corresponding ToolMessage
+            if tool_call_id_for_this_step:
                 combined_summary = "; ".join(
                     f"Action {idx + 1}: {(r.extracted_content or r.error or 'OK')[:100]}"
-                    for idx, r in enumerate(result)
+                    for idx, r in enumerate(action_execution_results)
                 )
                 self._message_manager.add_tool_message(
-                    content=f"Actions processed. Summary: {combined_summary}",
-                    tool_call_id=tool_call_id_for_step,
+                    content=f"Executed actions. Summary: {combined_summary if combined_summary else 'No specific result summary.'}",
+                    tool_call_id=tool_call_id_for_this_step,
                 )
+            else:
+                logger.error(
+                    "Cannot add ToolMessage: tool_call_id for the step was not established."
+                )
+
         except Exception as e:
-            result = await self._handle_step_error(e)
-            self.state.last_result = result
-            if tool_call_id_for_step:
+            action_execution_results = await self._handle_step_error(e)
+            self.state.last_result = action_execution_results
+            if tool_call_id_for_this_step:
                 self._message_manager.add_tool_message(
-                    content=f"Error: {str(e)}", tool_call_id=tool_call_id_for_step
+                    content=f"Critical error during step execution: {str(e)}",
+                    tool_call_id=tool_call_id_for_this_step,
                 )
-            # else: logger.error(f"Error in step before tool_call_id was obtained: {e}") # No specific tool_call_id to associate error with
+            else:
+                self._message_manager._add_message_with_tokens(
+                    HumanMessage(content=f"[AGENT ERROR] Step failed: {str(e)}")
+                )
+                logger.error(
+                    f"Error in step before tool_call_id was obtained or for non-tool_call flow: {e}"
+                )
+
         finally:
-            if browser_state_summary and model_output:
+            if browser_state_summary and model_decision_output:
                 self.state.history.history.append(
                     AgentHistory(
-                        model_output=model_output,
-                        result=result,
+                        model_output=model_decision_output,
+                        result=action_execution_results,
                         state={
                             "url": browser_state_summary.url,
                             "title": browser_state_summary.title,
@@ -1569,7 +2582,27 @@ class Agent(Generic[Context]):
                         metadata={"step": self.state.n_steps},
                     )
                 )
-            self.state.n_steps += 1
+            elif (
+                browser_state_summary
+                and not model_decision_output
+                and action_execution_results
+            ):
+                self.state.history.history.append(
+                    AgentHistory(
+                        model_output=None,
+                        result=action_execution_results,
+                        state={
+                            "url": browser_state_summary.url,
+                            "title": browser_state_summary.title,
+                            "screenshot_summary": (
+                                browser_state_summary.screenshot[:100]
+                                if browser_state_summary.screenshot
+                                else None
+                            ),
+                        },
+                        metadata={"step": self.state.n_steps, "error_before_llm": True},
+                    )
+                )
 
     async def run(
         self,
@@ -1577,84 +2610,154 @@ class Agent(Generic[Context]):
         on_step_start: Optional[Callable[["Agent"], Awaitable[None]]] = None,
         on_step_end: Optional[Callable[["Agent"], Awaitable[None]]] = None,
     ) -> AgentHistoryList:
-        logger.info(f"🚀 Starting task: {self.task}")
+        logger.info(f"🚀 Starting task: {self.task} (Agent v{self.version})")
+
         if self.initial_actions:
             logger.info(f"Executing initial actions: {self.initial_actions}")
             self.state.last_result = await self.multi_act(self.initial_actions)
-        for step_num in range(max_steps):
+            if self.state.last_result:
+                current_bs_state = None
+                if self.browser_session.initialized:
+                    try:
+                        current_bs_state = await self.browser_session.get_state_summary(
+                            cache_clickable_elements_hashes=False
+                        )
+                    except Exception as bse:
+                        logger.warning(
+                            f"Could not get browser state after initial actions: {bse}"
+                        )
+
+                self.state.history.history.append(
+                    AgentHistory(
+                        model_output=None,
+                        result=self.state.last_result,
+                        state={
+                            "url": current_bs_state.url if current_bs_state else "N/A",
+                            "title": current_bs_state.title
+                            if current_bs_state
+                            else "N/A",
+                            "note": "State after initial actions",
+                        },
+                        metadata={"step": 0, "type": "initial_actions"},
+                    )
+                )
+
+        for step_num_zero_indexed in range(max_steps):
+            actual_step_num = self.state.n_steps + 1
+
             if self.state.stopped:
                 logger.info("Agent stopped.")
                 break
+
             if self.state.paused:
-                logger.info("Agent paused. Waiting...")
+                logger.info("Agent paused. Waiting for resume...")
                 await self._external_pause_event.wait()
-            if self.state.stopped:
-                logger.info("Agent stopped during pause.")
-                break
+                if self.state.stopped:
+                    logger.info("Agent stopped during pause.")
+                    break
                 logger.info("Agent resumed.")
+
             if self.state.consecutive_failures >= self.settings.max_failures:
                 logger.error(
                     f"Stopping due to {self.settings.max_failures} consecutive failures."
                 )
-                (
+                if not self.state.history.is_done():
                     self._add_failure_done_action("Max consecutive failures reached.")
-                    if not self.state.history.is_done()
-                    else None
-                )
                 break
-            current_step_info = AgentStepInfo(step_number=step_num, max_steps=max_steps)
+
+            current_step_info = AgentStepInfo(
+                step_number=actual_step_num - 1, max_steps=max_steps
+            )
+
             if on_step_start:
                 await on_step_start(self)
+
             await self.step(step_info=current_step_info)
+
             if on_step_end:
                 await on_step_end(self)
+
             if self.state.history.is_done():
-                logger.info("✅ Task marked as done.")
+                logger.info("✅ Task marked as done by agent.")
                 break
         else:
-            logger.info(f"Max steps ({max_steps}) reached.")
             if not self.state.history.is_done():
+                logger.info(f"Max steps ({max_steps}) reached. Task may be incomplete.")
                 self._add_failure_done_action(
-                    "Max steps reached, task may be incomplete."
+                    "Max steps reached, task not marked done by agent."
                 )
-        logger.info(f"Agent run finished. Total steps: {self.state.n_steps - 1}")
+
+        logger.info(
+            f"Agent run finished. Total agent steps executed: {self.state.n_steps}"
+        )
         if self.settings.save_conversation_path:
             self._save_conversation()
+
         return self.state.history
 
     def _add_failure_done_action(self, reason: str):
-        logger.warning(f"Adding failure 'done' action: {reason}")
+        logger.warning(f"Forcing task completion as failure: {reason}")
+
+        if self.state.history.history:
+            last_hist_item = self.state.history.history[-1]
+            if (
+                last_hist_item.result
+                and last_hist_item.result[-1].is_done
+                and not last_hist_item.result[-1].success
+                and reason in (last_hist_item.result[-1].extracted_content or "")
+            ):
+                logger.info(
+                    f"Failure reason '{reason}' already matches the last 'done' action. Not adding duplicate."
+                )
+                return
+
         done_params = DoneAction(text=reason, success=False)
-        final_action = self.ActionModelType(**{"done": done_params.model_dump()})
-        final_brain = AgentBrain(
-            evaluation_previous_goal=reason, memory="N/A", next_goal="N/A"
+        try:
+            final_action = self.ActionModelType(**{"done": done_params})  # type: ignore
+        except ValidationError as ve:
+            logger.error(
+                f"Could not create 'done' ActionModel: {ve}. This might indicate a mismatch in ActionModelType structure."
+            )
+            if hasattr(self.ActionModelType, "done"):
+                final_action = self.ActionModelType(done=done_params)  # type: ignore
+            else:
+                logger.error(
+                    "Cannot determine how to structure 'done' action for ActionModelType. Skipping forced done history item."
+                )
+                return
+
+        final_brain_state = AgentBrain(
+            evaluation_previous_goal=f"Task aborted: {reason}",
+            memory="Task could not be completed successfully.",
+            next_goal="N/A - Task ended due to failure condition.",
         )
+
         final_model_output = self.AgentOutputType(
-            current_state=final_brain, action=[final_action]
+            current_state=final_brain_state,
+            action=[final_action],  # type: ignore
         )
-        final_result = ActionResult(
+
+        final_action_result = ActionResult(
             is_done=True, success=False, extracted_content=reason
         )
-        if self.state.history.history:
-            last_h = self.state.history.history[-1]
-            if (
-                last_h.result
-                and last_h.result[-1].is_done
-                and not last_h.result[-1].success
-                and reason in (last_h.result[-1].extracted_content or "")
-            ):
-                logger.info(f"Failure '{reason}' already in history.")
-                return
+
         self.state.history.history.append(
             AgentHistory(
                 model_output=final_model_output,
-                result=[final_result],
-                state={"url": "N/A", "title": "N/A"},
+                result=[final_action_result],
+                state={
+                    "url": "N/A",
+                    "title": "N/A",
+                    "note": "Forced completion due to failure/timeout",
+                },
                 metadata={
                     "step": self.state.n_steps,
                     "reason": f"Forced done: {reason}",
                 },
             )
+        )
+        logger.info(
+            f"Failure 'done' action added to history for step {self.state.n_steps}."
         )
 
     def _save_conversation(self):
@@ -1663,88 +2766,117 @@ class Agent(Generic[Context]):
         try:
             path = Path(self.settings.save_conversation_path)
             path.parent.mkdir(parents=True, exist_ok=True)
+
             file_path_str = str(
                 path
                 if path.name.lower().endswith(".json")
                 else path.with_name(f"{path.name}_agent_history.json")
             )
-            with open(file_path_str, "w") as f:
+
+            with open(file_path_str, "w", encoding="utf-8") as f:
                 f.write(self.state.history.model_dump_json(indent=2))
             logger.info(f"Agent history saved to {file_path_str}")
         except Exception as e:
-            logger.error(f"Failed to save conversation: {e}")
+            logger.error(
+                f"Failed to save conversation to {self.settings.save_conversation_path}: {e}",
+                exc_info=True,
+            )
 
     async def close(self):
         if self.browser_session and self.browser_session.initialized:
             await self.browser_session.stop()
-        logger.info("Agent closed.")
+        logger.info("Agent closed and browser session stopped.")
 
     def pause(self):
         self.state.paused = True
         self._external_pause_event.clear()
-        logger.info("Agent paused.")
+        logger.info(
+            "Agent execution paused. Call resume() to continue or stop() to terminate."
+        )
 
     def resume(self):
         if self.state.paused:
             self.state.paused = False
             self._external_pause_event.set()
-            logger.info("Agent resumed.")
+            logger.info("Agent execution resumed.")
         else:
-            logger.info("Agent not paused.")
+            logger.info("Agent is not paused.")
 
     def stop(self):
         self.state.stopped = True
         if self.state.paused:
             self._external_pause_event.set()
-        logger.info("Agent stop requested.")
+        logger.info(
+            "Agent stop requested. The current step will attempt to complete if safe."
+        )
 
 
 def log_response(response: AgentOutput) -> None:
     emoji = "🤷"
     if response.current_state:
         if response.current_state.evaluation_previous_goal:
-            if "Success" in response.current_state.evaluation_previous_goal:
+            eval_text = response.current_state.evaluation_previous_goal.lower()
+            if (
+                "success" in eval_text
+                or "found" in eval_text
+                or "completed" in eval_text
+            ):
                 emoji = "👍"
-            elif "Failed" in response.current_state.evaluation_previous_goal:
-                emoji = "⚠"
+            elif "fail" in eval_text or "error" in eval_text or "unable" in eval_text:
+                emoji = "⚠️"
             logger.info(
-                f"{emoji} Eval: {response.current_state.evaluation_previous_goal}"
+                f"{emoji} LLM Eval: {response.current_state.evaluation_previous_goal}"
             )
-        logger.info(f"🧠 Memory: {response.current_state.memory}")
-        logger.info(f"🎯 Next goal: {response.current_state.next_goal}")
+        logger.info(f"🧠 LLM Memory: {response.current_state.memory}")
+        logger.info(f"🎯 LLM Next Goal: {response.current_state.next_goal}")
+
     if response.action:
         for i, action_instance in enumerate(response.action):
-            action_dict = action_instance.model_dump(
+            action_dict_for_log = action_instance.model_dump(
                 exclude_unset=True, exclude_none=True
             )
-            if action_dict:
-                action_name = list(action_dict.keys())[0]
-                action_params = action_dict[action_name]
+
+            if action_dict_for_log:
+                action_name = list(action_dict_for_log.keys())[0]
+                action_params = action_dict_for_log[action_name]
+                try:
+                    params_str = json.dumps(action_params)
+                except TypeError:
+                    params_str = str(action_params)
+
                 logger.info(
-                    f"🛠️ Action {i + 1}/{len(response.action)}: {action_name}({json.dumps(action_params)})"
+                    f"🛠️ LLM Action {i + 1}/{len(response.action)}: {action_name}({params_str})"
                 )
             else:
                 logger.warning(
-                    f"Action {i + 1}/{len(response.action)} is empty/invalid."
+                    f"LLM Action {i + 1}/{len(response.action)} is empty or invalid after model_dump."
                 )
     else:
-        logger.warning("No action in AgentOutput.")
+        logger.warning("LLM AgentOutput contains no actions.")
 
 
 async def main():
     if not os.getenv("OPENAI_API_KEY"):
-        print("Error: OPENAI_API_KEY not found.")
+        print("Error: OPENAI_API_KEY environment variable not found.")
+        logger.error("OPENAI_API_KEY not found.")
         return
-    from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
-    task = "Go to google.com, search for 'current weather in Ho Chi Minh City', and then extract the temperature."
+    from langchain_openai import ChatOpenAI  # type: ignore
+
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.0)  # type: ignore
+
+    task = "Go to google.com, search for 'current weather in Ho Chi Minh City', and then extract the temperature and general conditions."
+
+    persistent_profile_path = os.getenv("PERSISTENT_PROFILE_PATH")
+    chrome_exe_path = os.getenv("CHROME_EXE_PATH")
+
     current_bp = DEFAULT_BROWSER_PROFILE.model_copy(
         update={
-            "user_data_dir": os.getenv("PERSISTENT_PROFILE_PATH"),
-            "executable_path": os.getenv("CHROME_EXE_PATH"),
+            "user_data_dir": persistent_profile_path,
+            "executable_path": chrome_exe_path,
             "headless": False,
-            "args": (DEFAULT_BROWSER_PROFILE.args or []) + ["--start-maximized"],
+            "args": (DEFAULT_BROWSER_PROFILE.args or [])
+            + ["--start-maximized", "--disable-gpu", "--no-sandbox"],
             "include_attributes": [
                 "id",
                 "class",
@@ -1760,18 +2892,26 @@ async def main():
                 "text_content",
             ],
             "highlight_elements": True,
+            "wait_between_actions": 1.0,
+            "viewport": {"width": 1920, "height": 1080},  # ADDED: Example large viewport
         }
     )
+
+    conversation_dir = Path("conversations")
+    conversation_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
     current_as = AgentSettings(
         use_vision=True,
-        max_actions_per_step=3,
+        max_actions_per_step=2,
         tool_calling_method="tools",
         page_extraction_llm=llm,
-        save_conversation_path=os.path.join(
-            "conversations",
-            f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_llm_conversation_history.json",
+        save_conversation_path=str(
+            conversation_dir / f"{timestamp}_agent_run_history.json"
         ),
+        max_failures=2,
     )
+
     agent = Agent(
         task=task,
         llm=llm,
@@ -1779,49 +2919,77 @@ async def main():
         browser_profile=current_bp,
         controller=Controller(),
     )
+
     try:
-        print(f"🚀 Starting agent task: {task}")
-        history = await agent.run(max_steps=10)
-        print("\n--- Agent Run History ---")
+        logger.info(f"🚀 Starting agent task: {task}")
+        history: AgentHistoryList = await agent.run(max_steps=10)
+
+        print("\n--- Agent Run History Summary ---")
         if history.history:
             for i, hist_item in enumerate(history.history):
+                step_metadata = hist_item.metadata or {}
                 print(
-                    f"\n--- History Step {i + 1} (Agent Step {hist_item.metadata.get('step', 'N/A') if hist_item.metadata else 'N/A'}) ---"
+                    f"\n--- History Record for Agent Step ~{step_metadata.get('step', i + 1)} ---"
                 )
+
                 if hist_item.model_output:
                     cs = hist_item.model_output.current_state
                     print(
-                        f"  LLM Eval: '{cs.evaluation_previous_goal}'\n  LLM Memory: '{cs.memory}'\n  LLM Next Goal: '{cs.next_goal}'"
+                        f"  LLM Decided -> Eval: '{cs.evaluation_previous_goal}' | Memory: '{cs.memory}' | Next Goal: '{cs.next_goal}'"
                     )
-                    for action_item in hist_item.model_output.action:
+                    for action_idx, action_item in enumerate(
+                        hist_item.model_output.action
+                    ):
                         ad = action_item.model_dump(
                             exclude_unset=True, exclude_none=True
                         )
                         if ad:
+                            action_name = list(ad.keys())[0]
+                            action_params = json.dumps(list(ad.values())[0])
                             print(
-                                f"  LLM Action: {list(ad.keys())[0]}({json.dumps(list(ad.values())[0])})"
-                            )  # type: ignore
+                                f"    LLM Action {action_idx + 1}: {action_name}({action_params})"
+                            )
+                else:
+                    print(
+                        "  No LLM output for this history item (e.g., initial actions or forced failure)."
+                    )
+
                 if hist_item.result:
                     for res_idx, res_item in enumerate(hist_item.result):
-                        print(f"  Action Result {res_idx + 1}:")
+                        print(f"  Actual Action Result {res_idx + 1}:")
                         if res_item.extracted_content:
-                            print(f"    Content: {res_item.extracted_content[:200]}...")
+                            print(
+                                f"    Content: {res_item.extracted_content[:300].strip()}..."
+                            )
                         if res_item.error:
                             print(f"    Error: {res_item.error}")
                         if res_item.is_done:
-                            print(f"    Task Done: Success={res_item.success}")
-                if hist_item.state and hist_item.state.get("url"):
+                            print(f"    Task Marked Done: Success={res_item.success}")
+
+                browser_s = hist_item.state or {}
+                if browser_s.get("url"):
                     print(
-                        f"  Browser State: URL={hist_item.state['url']}, Title='{hist_item.state.get('title', 'N/A')}'"
+                        f"  Browser State Context: URL='{browser_s.get('url')}', Title='{browser_s.get('title', 'N/A')}'"
                     )
+                if step_metadata.get("note"):
+                    print(f"  Note: {step_metadata.get('note')}")
+                if step_metadata.get("reason"):
+                    print(f"  Reason: {step_metadata.get('reason')}")
+
         final_content = history.final_result()
         if final_content:
-            print(f"\n✅ Final Result: {final_content}")
+            print(f"\n✅ Final Result from Agent: {final_content}")
         else:
-            print("\n Agent did not complete successfully or produce a final result.")
+            if history.is_done() and not history.is_successful():
+                print("\n❌ Agent marked task as done, but reported failure.")
+            else:
+                print(
+                    "\n❓ Agent did not complete the task successfully or produce a final result within the step limit."
+                )
+
     except Exception as e:
-        print(f"Error during agent execution: {e}")
-        logger.error("Main execution error", exc_info=True)
+        print(f"An error occurred during agent execution: {type(e).__name__} - {e}")
+        logger.error("Main execution loop error", exc_info=True)
     finally:
         print("Closing browser session...")
         await agent.close()

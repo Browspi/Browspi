@@ -47,22 +47,23 @@ class Job(BaseModel):
 @job_controller.action(
     "Save jobs to file - with a score how well it fits to my profile", param_model=Job
 )
-def save_jobs(job: Job):
+async def save_jobs(job: Job):  # Changed to async def
     with open("jobs.csv", "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([job.title, job.company, job.link, job.salary, job.location])
-
-    return "Saved job to file"
+    # Return ActionResult for consistency, though the framework can handle string returns too
+    return ActionResult(extracted_content="Saved job to file")
 
 
 @job_controller.action("Read jobs from file")
-def read_jobs():
+async def read_jobs():  # Changed to async def
     with open("jobs.csv") as f:
-        return f.read()
+        content = f.read()
+    return ActionResult(extracted_content=content, include_in_memory=True)
 
 
 @job_controller.action("Read my cv for context to fill forms")
-def read_cv():
+async def read_cv():  # Changed to async def
     pdf = PdfReader(CV)
     text = ""
     for page in pdf.pages:
@@ -105,13 +106,43 @@ async def main():
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
-    ground_task = (
-		'You are a professional job finder. '
-		'1. Read my cv with read_cv'
-		'find ml internships in and save them to a file'
-		'search at company:'
-	)
-    task = ground_task + '\n' + 'Google'
+    ground_task = """
+        You are an AI agent tasked with finding and applying to jobs that match my profile.
+        Your goal is to find jobs that match my skills and experience, and apply to them using the provided CV.
+        1. Read my cv with read_cv
+        2. Search for jobs that match my profile using the provided job search engine.
+        3. Apply to the job using the provided cv by uploading it to the job application form.
+        4. If it open a Chrome new tab, switch to the new tab and find the job application form.
+            4.1. If the job application form is not found, try to find the file upload element by index and upload the cv.
+            4.2. If the job application form is not found, then skip the job and move to the next one.
+            4.3. If the job application form is found, then fill in the form with my cv and submit it.
+            4.4. If no job application form is found, switch back to the previous Chrome tab and continue searching for jobs.
+        5. If the job application form is not found, then skip the job and move to the next one.
+        6. If the job application form is found, then fill in the form with my cv and submit it.
+        7. If the job application form is not found, then skip the job and move to the next one.
+        8. If the job application form is found, then fill in the form with my cv and submit it.
+    Hint: If you encounter a security check or captcha, please wait for 15 seconds from me to solve it before proceeding.
+    """
+
+    task = (
+        ground_task
+        + """
+        Please find those jobs in this Linkedin website: https://www.linkedin.com/jobs
+        If login is required. Login with the credentials provided in the environment variables:
+        Linkedin username: {{LINKEDIN_USERNAME}}
+        Linkedin password: {{LINKEDIN_PASSWORD}}
+        After logging in, search for jobs that match my profile.
+        Hint: 
+        1. If you cannot find the search submission form, try to hit Enter key on the search input field to submit the search.
+        2. If you stuck at choosing the options in the application form, try to click on the option element to select it.
+        3. If you encounter a select element, try to click on the select element to open the dropdown and then click on the option you want to select.
+        4. If you stuck at submitting the application form, try to recheck the form for any missing fields or errors.
+    """
+    )
+
+    task = task.replace("{{LINKEDIN_USERNAME}}", os.getenv("LINKEDIN_USERNAME"))
+    task = task.replace("{{LINKEDIN_PASSWORD}}", os.getenv("LINKEDIN_PASSWORD"))
+
     current_bp = DEFAULT_BROWSER_PROFILE.model_copy(
         update={
             "user_data_dir": os.getenv("PERSISTENT_PROFILE_PATH"),
@@ -154,7 +185,7 @@ async def main():
     )
     try:
         print(f"🚀 Starting agent task: {task}")
-        history = await agent.run(max_steps=10)
+        history = await agent.run(max_steps=50)
         print("\n--- Agent Run History ---")
         if history.history:
             for i, hist_item in enumerate(history.history):

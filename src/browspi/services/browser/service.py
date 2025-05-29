@@ -880,7 +880,9 @@ class BrowserSession(BaseModel):
             except Exception as e:
                 logger.error(f"Failed to save cookies: {e}")
 
-    async def find_file_upload_element_by_index(self, index: int) -> DOMElementNode | None:
+    async def find_file_upload_element_by_index(
+        self, index: int
+    ) -> DOMElementNode | None:
         """
         Find a file upload element related to the element at the given index:
         - Check if the element itself is a file input
@@ -902,11 +904,17 @@ class BrowserSession(BaseModel):
             candidate_element = selector_map[index]
 
             def is_file_input(node: DOMElementNode) -> bool:
-                return isinstance(node, DOMElementNode) and node.tag_name == 'input' and node.attributes.get('type') == 'file'
+                return (
+                    isinstance(node, DOMElementNode)
+                    and node.tag_name == "input"
+                    and node.attributes.get("type") == "file"
+                )
 
-            def find_element_by_id(node: DOMElementNode, element_id: str) -> DOMElementNode | None:
+            def find_element_by_id(
+                node: DOMElementNode, element_id: str
+            ) -> DOMElementNode | None:
                 if isinstance(node, DOMElementNode):
-                    if node.attributes.get('id') == element_id:
+                    if node.attributes.get("id") == element_id:
                         return node
                     for child in node.children:
                         result = find_element_by_id(child, element_id)
@@ -935,7 +943,9 @@ class BrowserSession(BaseModel):
                 if node.children and current_depth < max_depth:
                     for child in node.children:
                         if isinstance(child, DOMElementNode):
-                            result = find_file_input_recursive(child, max_depth, current_depth + 1)
+                            result = find_file_input_recursive(
+                                child, max_depth, current_depth + 1
+                            )
                             if result:
                                 return result
                 return None
@@ -945,8 +955,11 @@ class BrowserSession(BaseModel):
                 return candidate_element
 
             # Check if it's a label pointing to a file input
-            if candidate_element.tag_name == 'label' and candidate_element.attributes.get('for'):
-                input_id = candidate_element.attributes.get('for')
+            if (
+                candidate_element.tag_name == "label"
+                and candidate_element.attributes.get("for")
+            ):
+                input_id = candidate_element.attributes.get("for")
                 root_element = get_root(candidate_element)
 
                 target_input = find_element_by_id(root_element, input_id)
@@ -961,11 +974,13 @@ class BrowserSession(BaseModel):
             # Check siblings
             if candidate_element.parent:
                 for sibling in candidate_element.parent.children:
-                    if sibling is not candidate_element and isinstance(sibling, DOMElementNode):
+                    if sibling is not candidate_element and isinstance(
+                        sibling, DOMElementNode
+                    ):
                         if is_file_input(sibling):
                             return sibling
             return None
 
         except Exception as e:
-            logger.debug(f'Error in find_file_upload_element_by_index: {e}')
+            logger.debug(f"Error in find_file_upload_element_by_index: {e}")
             return None
