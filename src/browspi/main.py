@@ -1773,7 +1773,7 @@ async def main():
         ),
     )
     agent = Agent(
-        task=task, llm=llm, agent_settings=current_as, browser_profile=current_bp
+        task=task, llm=llm, agent_settings=current_as, browser_profile=current_bp, controller=Controller()
     )
     try:
         print(f"🚀 Starting agent task: {task}")
