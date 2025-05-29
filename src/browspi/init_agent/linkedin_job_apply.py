@@ -109,19 +109,22 @@ async def main():
     ground_task = """
         You are an AI agent tasked with finding and applying to jobs that match my profile.
         Your goal is to find jobs that match my skills and experience, and apply to them using the provided CV.
-        1. Read my cv with read_cv
-        2. Search for jobs that match my profile using the provided job search engine.
-        3. Apply to the job using the provided cv by uploading it to the job application form.
-        4. If it open a Chrome new tab, switch to the new tab and find the job application form.
-            4.1. If the job application form is not found, try to find the file upload element by index and upload the cv.
-            4.2. If the job application form is not found, then skip the job and move to the next one.
-            4.3. If the job application form is found, then fill in the form with my cv and submit it.
-            4.4. If no job application form is found, switch back to the previous Chrome tab and continue searching for jobs.
-        5. If the job application form is not found, then skip the job and move to the next one.
-        6. If the job application form is found, then fill in the form with my cv and submit it.
-        7. If the job application form is not found, then skip the job and move to the next one.
-        8. If the job application form is found, then fill in the form with my cv and submit it.
-    Hint: If you encounter a security check or captcha, please wait for 15 seconds from me to solve it before proceeding.
+        1. Read my cv with using read_cv function. And remember it to fill the job application form.
+        2. Search for jobs that match my profile using the provided job search engine. Try to hit Enter key on the search input field to submit the search.
+        3. Check carefully that you are in the job listings. The previous search must be success to come there. Filter the jobs by hitting the button "Easy Apply"
+        4. Apply to the job using the provided cv by uploading it to the job application form.
+        5. If it open a Chrome new tab, switch to the new tab and find the job application form.
+            5.1. If the job application form is not found, try to find the file upload element by index and upload the cv.
+            5.2. If the job application form is not found, then skip the job and move to the next one.
+            5.3. If the job application form is found, then fill in the form with my cv and submit it.
+            5.4. If no job application form is found, switch back to the previous Chrome tab and continue searching for jobs.
+        6. If the job application form is not found, then skip the job and move to the next one.
+        7. If the job application form is found, then fill in the form with my cv and submit it.
+        8. If the job application form is not found, then skip the job and move to the next one.
+        9. If the job application form is found, then fill in the form with my cv and submit it.
+    Hint: 
+    1. If you encounter a security check or captcha, please wait for 15 seconds from me to solve it before proceeding. Or go back to the previous tab and continue searching for jobs.
+    2. If you stuck at step applying to the job for more than 5 steps, then try to move to the next job.
     """
 
     task = (
