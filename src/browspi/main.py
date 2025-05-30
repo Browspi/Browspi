@@ -76,7 +76,7 @@ logger = logging.getLogger(__name__)
 # For the purpose of this example, let's define minimal versions.
 
 
-class DOMElementNode(BaseModel):  # Simplified from browser-use for selector_map value
+class DOMElementNode(BaseModel): 
     xpath: str
     tag_name: str
     attributes: Dict[str, Any] = {}
@@ -179,7 +179,7 @@ class BrowserSession:  # User's BrowserSession
         self.initialized: bool = False
         self._cached_browser_state_summary: Optional[BrowserStateSummary] = None
         self._cached_clickable_element_hashes: Optional[Any] = (
-            None  # As in browser-use for DOM change detection
+            None 
         )
 
     async def start(self):
@@ -261,19 +261,13 @@ class BrowserSession:  # User's BrowserSession
     async def get_state_summary(
         self, cache_clickable_elements_hashes: bool = True
     ) -> BrowserStateSummary:
-        # This is a simplified version. A real one would run JS on the page
-        # like browser-use's DomService to get element_tree and selector_map.
-        # For now, we'll mock it.
         page = await self.get_current_page()
         title = await page.title()
         url = page.url
 
-        # Mocked element extraction - replace with actual DOM traversal if possible
-        # This part is crucial and complex. browser-use uses buildDomTree.js
         selector_map_mock: Dict[int, DOMElementNode] = {}
         try:
             # A very basic way to get some interactive elements.
-            # This will not be as robust or complete as browser-use.
             interactive_elements = await page.query_selector_all(
                 'button, a[href], input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [onclick]'
             )

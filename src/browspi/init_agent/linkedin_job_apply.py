@@ -68,7 +68,8 @@ async def read_cv():  # Changed to async def
     text = ""
     for page in pdf.pages:
         text += page.extract_text() or ""
-    logger.info(f"Read cv with {len(text)} characters")
+    # logger.info(f"Read cv with {len(text)} characters")
+    logger.info(f"{text}")
     return ActionResult(extracted_content=text, include_in_memory=True)
 
 
@@ -106,12 +107,14 @@ async def main():
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
-    ground_task = """
+
+    task = (
+    """
         You are an AI agent tasked with finding and applying to jobs that match my profile.
         Your goal is to find jobs that match my skills and experience, and apply to them using the provided CV.
-        1. Read my cv with using read_cv function. And remember it to fill the job application form.
+        1. Please use read_cv function at the beginning.
         2. Search for jobs that match my profile using the provided job search engine. Try to hit Enter key on the search input field to submit the search.
-        3. Check carefully that you are in the job listings. The previous search must be success to come there. Filter the jobs by hitting the button "Easy Apply"
+        3. If you are successfully can get in the job listings then filter the jobs by hitting the button "Easy Apply". Also check if the apply button is a link to external website then skip the job.
         4. Apply to the job using the provided cv by uploading it to the job application form.
         5. If it open a Chrome new tab, switch to the new tab and find the job application form.
             5.1. If the job application form is not found, try to find the file upload element by index and upload the cv.
@@ -123,23 +126,20 @@ async def main():
         8. If the job application form is not found, then skip the job and move to the next one.
         9. If the job application form is found, then fill in the form with my cv and submit it.
     Hint: 
-    1. If you encounter a security check or captcha, please wait for 15 seconds from me to solve it before proceeding. Or go back to the previous tab and continue searching for jobs.
-    2. If you stuck at step applying to the job for more than 5 steps, then try to move to the next job.
-    """
-
-    task = (
-        ground_task
-        + """
-        Please find those jobs in this Linkedin website: https://www.linkedin.com/jobs
-        If login is required. Login with the credentials provided in the environment variables:
-        Linkedin username: {{LINKEDIN_USERNAME}}
-        Linkedin password: {{LINKEDIN_PASSWORD}}
-        After logging in, search for jobs that match my profile.
-        Hint: 
-        1. If you cannot find the search submission form, try to hit Enter key on the search input field to submit the search.
-        2. If you stuck at choosing the options in the application form, try to click on the option element to select it.
-        3. If you encounter a select element, try to click on the select element to open the dropdown and then click on the option you want to select.
-        4. If you stuck at submitting the application form, try to recheck the form for any missing fields or errors.
+        1. If you encounter a security check or captcha, please wait for 15 seconds from me to solve it before proceeding. Or go back to the previous tab and continue searching for jobs.
+        2. If you stuck at step applying to the job for more than 5 steps, then try to move to the next job.
+        3. Please remember to use the your memory to fill the job application form with my cv. Like my name, email, phone number, etc.
+        4. Don't Locate the 'Jobs' button to access the job search page
+            Please find those jobs in this Linkedin website: https://www.linkedin.com/jobs
+            If login is required. Login with the credentials provided in the environment variables:
+            Linkedin username: {{LINKEDIN_USERNAME}}
+            Linkedin password: {{LINKEDIN_PASSWORD}}
+            After logging in, search for jobs that match my profile.
+            Hint: 
+            1. If you cannot find the search submission form, try to hit Enter key on the search input field to submit the search.
+            2. If you stuck at choosing the options in the application form, try to click on the option element to select it.
+            3. If you encounter a select element, try to click on the select element to open the dropdown and then click on the option you want to select.
+            4. If you stuck at submitting the application form, try to recheck the form for any missing fields or errors.
     """
     )
 
