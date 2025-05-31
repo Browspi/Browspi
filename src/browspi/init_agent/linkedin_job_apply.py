@@ -110,36 +110,52 @@ async def main():
 
     task = (
     """
-        You are an AI agent tasked with finding and applying to jobs that match my profile.
-        Your goal is to find jobs that match my skills and experience, and apply to them using the provided CV.
-        1. Please use read_cv function at the beginning.
-        2. Search for jobs that match my profile using the provided job search engine. Try to hit Enter key on the search input field to submit the search.
-        3. If you are successfully can get in the job listings then filter the jobs by hitting the button "Easy Apply". Also check if the apply button is a link to external website then skip the job.
-        4. Apply to the job using the provided cv by uploading it to the job application form.
-        5. If it open a Chrome new tab, switch to the new tab and find the job application form.
-            5.1. If the job application form is not found, try to find the file upload element by index and upload the cv.
-            5.2. If the job application form is not found, then skip the job and move to the next one.
-            5.3. If the job application form is found, then fill in the form with my cv and submit it.
-            5.4. If no job application form is found, switch back to the previous Chrome tab and continue searching for jobs.
-        6. If the job application form is not found, then skip the job and move to the next one.
-        7. If the job application form is found, then fill in the form with my cv and submit it.
-        8. If the job application form is not found, then skip the job and move to the next one.
-        9. If the job application form is found, then fill in the form with my cv and submit it.
-    Hint: 
-        1. If you encounter a security check or captcha, please wait for 15 seconds from me to solve it before proceeding. Or go back to the previous tab and continue searching for jobs.
-        2. If you stuck at step applying to the job for more than 5 steps, then try to move to the next job.
-        3. Please remember to use the your memory to fill the job application form with my cv. Like my name, email, phone number, etc.
-        4. Don't Locate the 'Jobs' button to access the job search page
-            Please find those jobs in this Linkedin website: https://www.linkedin.com/jobs
-            If login is required. Login with the credentials provided in the environment variables:
-            Linkedin username: {{LINKEDIN_USERNAME}}
-            Linkedin password: {{LINKEDIN_PASSWORD}}
-            After logging in, search for jobs that match my profile.
-            Hint: 
-            1. If you cannot find the search submission form, try to hit Enter key on the search input field to submit the search.
-            2. If you stuck at choosing the options in the application form, try to click on the option element to select it.
-            3. If you encounter a select element, try to click on the select element to open the dropdown and then click on the option you want to select.
-            4. If you stuck at submitting the application form, try to recheck the form for any missing fields or errors.
+    You are an AI Job Application Assistant. Your primary goal is to find suitable job openings on LinkedIn that match the skills and experience detailed in the provided CV, and then apply to those jobs.
+
+    **Overall Workflow:**
+
+    **Phase 1: Setup & Initial Search**
+    1.  **Load Profile:** Begin by using the `read_cv` function to load the content of my CV. This content is "my profile" for job matching.
+    2.  **Navigate to LinkedIn Jobs:** Go directly to `https://www.linkedin.com/jobs`.
+    3.  **Login (if required):**
+        * If a login page appears, use the following credentials (provided as environment variables):
+            * Username: `{{LINKEDIN_USERNAME}}`
+            * Password: `{{LINKEDIN_PASSWORD}}`
+    4.  **Initial Job Search:**
+        * Once logged in (or if no login was needed), search for jobs that align with the details extracted from my CV.
+        * **Action Tip:** Hit enter to submit the search query after entering keywords in the search bar.
+
+    **Phase 2: Job Filtering & Application (Loop per suitable job)**
+    5.  **Filter for "Easy Apply":** On the job listings page, prioritize jobs with an "Easy Apply" option. Click the "Easy Apply" filter button if available.
+    6.  **Identify Suitable Job & Initiate Application:**
+        * Select a promising job from the filtered list.
+        * **Crucial Check:** Before proceeding, verify if the "Apply" button links to an external website. If it does, **skip this job** and move to the next one.
+        * If it's an internal LinkedIn "Easy Apply", proceed.
+    7.  **Application Form Handling:**
+        * **New Tab Management:** If the application process opens in a new Chrome tab, switch to this new tab.
+        * **Locate Application Form:** Find the job application form on the page.
+        * **Form Filling:** Use the information extracted from my CV (via `read_cv` in step 1) to fill out the application form fields (e.g., name, email, phone number, experience details).
+        * **CV Upload:**
+            * Locate the file upload element for the CV.
+            * Use the `upload_cv` function with the appropriate element index. If the first attempt fails, try to identify the correct index for the upload element and call `upload_cv` again.
+        * **Submission:** After filling the form and uploading the CV, submit the application.
+    8.  **Handling Application Issues & Skipping:**
+        * **Form Not Found / CV Upload Fails:** If, after reasonable attempts (e.g., trying different indices for `upload_cv`), the application form cannot be properly actioned (e.g., form not found, CV upload element persistently not working), then:
+            * If you are in a new tab, close it and switch back to the main LinkedIn jobs tab.
+            * **Skip this job** and move to the next suitable job in the listings.
+        * **Stuck in Application:** If you find yourself stuck on a single job application for more than 5 distinct action steps (e.g., repeated failed attempts to fill a field, click a button, or upload CV), **skip this job** and move to the next one.
+
+    **General Guidelines & Action Tips:**
+
+    * **Security Checks/CAPTCHAs:** If you encounter a security check or CAPTCHA:
+        * First, use the `wait` action for 15 seconds to allow manual intervention.
+        * If unresolved, and if you are on an application page, try to go back to the LinkedIn jobs tab and select a different job.
+    * **Using CV Data:** When filling forms, actively recall and use the specific details (name, email, phone, work history, skills) obtained from the `read_cv` function.
+    * **Dropdowns/Select Elements:** If you encounter a `<select>` dropdown element:
+        1.  Click the `<select>` element itself to open the dropdown.
+        2.  Then, click the desired `<option>` element within the opened dropdown.
+    * **Form Submission Issues:** If an application submission fails, re-examine the form for any highlighted errors or missing required fields before attempting to submit again.
+    * **Be Methodical:** Break down complex forms into smaller, logical steps.
     """
     )
 
