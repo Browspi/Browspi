@@ -143,6 +143,7 @@ async def main():
         * **Form Not Found / CV Upload Fails:** If, after reasonable attempts (e.g., trying different indices for `upload_cv`), the application form cannot be properly actioned (e.g., form not found, CV upload element persistently not working), then:
             * If you are in a new tab, close it and switch back to the main LinkedIn jobs tab.
             * **Skip this job** and move to the next suitable job in the listings.
+        Don't upload_cv, as it already uploaded the CV on LinkedIn.
         * **Stuck in Application:** If you find yourself stuck on a single job application for more than 5 distinct action steps (e.g., repeated failed attempts to fill a field, click a button, or upload CV), **skip this job** and move to the next one.
 
     **General Guidelines & Action Tips:**
