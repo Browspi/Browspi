@@ -76,7 +76,7 @@ logger = logging.getLogger(__name__)
 # For the purpose of this example, let's define minimal versions.
 
 
-class DOMElementNode(BaseModel): 
+class DOMElementNode(BaseModel):
     xpath: str
     tag_name: str
     attributes: Dict[str, Any] = {}
@@ -163,7 +163,7 @@ class BrowserProfile(BaseModel):
     wait_between_actions: float = 0.5  # seconds
     cookies_file: Optional[str] = None
     storage_state: Optional[str] = None
-    viewport: Optional[Dict[str, int]] = None  
+    viewport: Optional[Dict[str, int]] = None
 
 
 DEFAULT_BROWSER_PROFILE = BrowserProfile()
@@ -178,16 +178,17 @@ class BrowserSession:  # User's BrowserSession
         self.agent_current_page: Optional[Page] = None
         self.initialized: bool = False
         self._cached_browser_state_summary: Optional[BrowserStateSummary] = None
-        self._cached_clickable_element_hashes: Optional[Any] = (
-            None 
-        )
+        self._cached_clickable_element_hashes: Optional[Any] = None
 
     async def start(self):
-        from playwright.async_api import async_playwright # type: ignore
+        from playwright.async_api import async_playwright  # type: ignore
+
         p = await async_playwright().start()
 
         if self.browser_profile.user_data_dir:
-            logger.info(f"Attempting to launch persistent context with user_data_dir: {self.browser_profile.user_data_dir}")
+            logger.info(
+                f"Attempting to launch persistent context with user_data_dir: {self.browser_profile.user_data_dir}"
+            )
             try:
                 self.playwright_context = await p.chromium.launch_persistent_context(
                     user_data_dir=self.browser_profile.user_data_dir,
@@ -201,13 +202,20 @@ class BrowserSession:  # User's BrowserSession
                     self.agent_current_page = self.playwright_context.pages[0]
                 else:
                     self.agent_current_page = await self.playwright_context.new_page()
-                logger.info(f"Launched persistent context with profile: {self.browser_profile.user_data_dir}")
+                logger.info(
+                    f"Launched persistent context with profile: {self.browser_profile.user_data_dir}"
+                )
             except Exception as e:
-                logger.error(f"Failed to launch persistent context with user_data_dir '{self.browser_profile.user_data_dir}': {e}", exc_info=True)
+                logger.error(
+                    f"Failed to launch persistent context with user_data_dir '{self.browser_profile.user_data_dir}': {e}",
+                    exc_info=True,
+                )
                 logger.info("Falling back to non-persistent context launch.")
                 await self._launch_non_persistent_context(p)
         else:
-            logger.info("Launching non-persistent context (no user_data_dir specified in profile).")
+            logger.info(
+                "Launching non-persistent context (no user_data_dir specified in profile)."
+            )
             await self._launch_non_persistent_context(p)
 
         self.initialized = True
@@ -218,21 +226,30 @@ class BrowserSession:  # User's BrowserSession
         browser = await playwright_instance.chromium.launch(
             headless=self.browser_profile.headless,
             executable_path=self.browser_profile.executable_path,
-            args=self.browser_profile.args
+            args=self.browser_profile.args,
         )
         self.playwright_context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
             viewport=self.browser_profile.viewport,  # MODIFIED: Pass viewport
         )
-        if self.browser_profile.storage_state and os.path.exists(self.browser_profile.storage_state):
-            logger.info(f"Loading storage state for new context from: {self.browser_profile.storage_state}")
+        if self.browser_profile.storage_state and os.path.exists(
+            self.browser_profile.storage_state
+        ):
+            logger.info(
+                f"Loading storage state for new context from: {self.browser_profile.storage_state}"
+            )
             try:
-                with open(self.browser_profile.storage_state, 'r') as f:
+                with open(self.browser_profile.storage_state, "r") as f:
                     storage_state_dict = json.load(f)
-                await self.playwright_context.add_cookies(storage_state_dict.get('cookies', []))
+                await self.playwright_context.add_cookies(
+                    storage_state_dict.get("cookies", [])
+                )
             except Exception as e:
-                logger.error(f"Failed to load storage state from '{self.browser_profile.storage_state}': {e}", exc_info=True)
-        
+                logger.error(
+                    f"Failed to load storage state from '{self.browser_profile.storage_state}': {e}",
+                    exc_info=True,
+                )
+
         self.agent_current_page = await self.playwright_context.new_page()
         logger.info("Launched non-persistent context.")
 
@@ -364,12 +381,15 @@ class BrowserSession:  # User's BrowserSession
             )
 
     SelectorMap = dict[int, DOMElementNode]
+
     async def get_selector_map(self) -> SelectorMap:
         if self._cached_browser_state_summary is None:
             return {}
         return self._cached_browser_state_summary.selector_map
 
-    async def find_file_upload_element_by_index(self, index: int) -> DOMElementNode | None:
+    async def find_file_upload_element_by_index(
+        self, index: int
+    ) -> DOMElementNode | None:
         """
         Find a file upload element related to the element at the given index:
         - Check if the element itself is a file input
@@ -391,11 +411,17 @@ class BrowserSession:  # User's BrowserSession
             candidate_element = selector_map[index]
 
             def is_file_input(node: DOMElementNode) -> bool:
-                return isinstance(node, DOMElementNode) and node.tag_name == 'input' and node.attributes.get('type') == 'file'
+                return (
+                    isinstance(node, DOMElementNode)
+                    and node.tag_name == "input"
+                    and node.attributes.get("type") == "file"
+                )
 
-            def find_element_by_id(node: DOMElementNode, element_id: str) -> DOMElementNode | None:
+            def find_element_by_id(
+                node: DOMElementNode, element_id: str
+            ) -> DOMElementNode | None:
                 if isinstance(node, DOMElementNode):
-                    if node.attributes.get('id') == element_id:
+                    if node.attributes.get("id") == element_id:
                         return node
                     for child in node.children:
                         result = find_element_by_id(child, element_id)
@@ -424,7 +450,9 @@ class BrowserSession:  # User's BrowserSession
                 if node.children and current_depth < max_depth:
                     for child in node.children:
                         if isinstance(child, DOMElementNode):
-                            result = find_file_input_recursive(child, max_depth, current_depth + 1)
+                            result = find_file_input_recursive(
+                                child, max_depth, current_depth + 1
+                            )
                             if result:
                                 return result
                 return None
@@ -434,8 +462,11 @@ class BrowserSession:  # User's BrowserSession
                 return candidate_element
 
             # Check if it's a label pointing to a file input
-            if candidate_element.tag_name == 'label' and candidate_element.attributes.get('for'):
-                input_id = candidate_element.attributes.get('for')
+            if (
+                candidate_element.tag_name == "label"
+                and candidate_element.attributes.get("for")
+            ):
+                input_id = candidate_element.attributes.get("for")
                 root_element = get_root(candidate_element)
 
                 target_input = find_element_by_id(root_element, input_id)
@@ -450,13 +481,15 @@ class BrowserSession:  # User's BrowserSession
             # Check siblings
             if candidate_element.parent:
                 for sibling in candidate_element.parent.children:
-                    if sibling is not candidate_element and isinstance(sibling, DOMElementNode):
+                    if sibling is not candidate_element and isinstance(
+                        sibling, DOMElementNode
+                    ):
                         if is_file_input(sibling):
                             return sibling
             return None
 
         except Exception as e:
-            logger.debug(f'Error in find_file_upload_element_by_index: {e}')
+            logger.debug(f"Error in find_file_upload_element_by_index: {e}")
             return None
 
     async def get_locate_element(self, element: DOMElementNode) -> ElementHandle | None:
@@ -475,7 +508,7 @@ class BrowserSession:  # User's BrowserSession
         parents.reverse()
 
         # Process all iframe parents in sequence
-        iframes = [item for item in parents if item.tag_name == 'iframe']
+        iframes = [item for item in parents if item.tag_name == "iframe"]
         for parent in iframes:
             css_selector = self._enhanced_css_selector_for_element(
                 parent,
@@ -484,12 +517,15 @@ class BrowserSession:  # User's BrowserSession
             current_frame = current_frame.frame_locator(css_selector)
 
         css_selector = self._enhanced_css_selector_for_element(
-            element, include_dynamic_attributes=self.browser_profile.include_dynamic_attributes
+            element,
+            include_dynamic_attributes=self.browser_profile.include_dynamic_attributes,
         )
 
         try:
             if isinstance(current_frame, FrameLocator):
-                element_handle = await current_frame.locator(css_selector).element_handle()
+                element_handle = await current_frame.locator(
+                    css_selector
+                ).element_handle()
                 return element_handle
             else:
                 # Try to scroll into view if hidden
@@ -501,7 +537,7 @@ class BrowserSession:  # User's BrowserSession
                     return element_handle
                 return None
         except Exception as e:
-            logger.error(f'❌  Failed to locate element: {str(e)}')
+            logger.error(f"❌  Failed to locate element: {str(e)}")
             return None
 
 
@@ -1097,7 +1133,7 @@ class Controller(Generic[Context]):
 
             element_info = state.selector_map[params.index]
             page = await browser_session.get_current_page()
-            
+
             base_locator = page.locator(f"xpath={element_info.xpath}")
             final_element_handle: Optional[ElementHandle] = None
             candidate_handles_to_dispose: List[ElementHandle] = []
@@ -1114,51 +1150,85 @@ class Controller(Generic[Context]):
                 if len(matching_elements) == 1:
                     # If only one, check if it's disabled. If it's the intended non-disabled input, great.
                     # If it's disabled but was the only one found by XPath, input might fail but we try.
-                    is_sole_candidate_disabled = await matching_elements[0].is_disabled()
+                    is_sole_candidate_disabled = await matching_elements[
+                        0
+                    ].is_disabled()
                     if is_sole_candidate_disabled:
-                        logger.warning(f"XPath {element_info.xpath} for index {params.index} resolved to a unique but DISABLED element. Input may fail.")
+                        logger.warning(
+                            f"XPath {element_info.xpath} for index {params.index} resolved to a unique but DISABLED element. Input may fail."
+                        )
                     else:
-                        logger.info(f"XPath {element_info.xpath} for index {params.index} resolved to a unique, non-disabled element.")
+                        logger.info(
+                            f"XPath {element_info.xpath} for index {params.index} resolved to a unique, non-disabled element."
+                        )
                     final_element_handle = matching_elements[0]
-                else: # Multiple elements found, need to disambiguate
+                else:  # Multiple elements found, need to disambiguate
                     logger.warning(
                         f"XPath {element_info.xpath} for index {params.index} resolved to {len(matching_elements)} elements. Attempting to disambiguate for input."
                     )
-                    
+
                     # Get attributes from element_info for comparison
                     attr_id_val = element_info.attributes.get("id")
                     attr_name_val = element_info.attributes.get("name")
-                    attr_value_val = element_info.attributes.get("value") # Less common for input target, but possible
+                    attr_value_val = element_info.attributes.get(
+                        "value"
+                    )  # Less common for input target, but possible
                     attr_role_val = element_info.attributes.get("role")
                     attr_aria_label_val = element_info.attributes.get("aria-label")
                     attr_placeholder_val = element_info.attributes.get("placeholder")
                     # text_content is usually not for input fields themselves but could be a label associated elsewhere
-                    attr_text_content_val = (element_info.attributes.get("text_content") or "").strip()
-
+                    (element_info.attributes.get("text_content") or "").strip()
 
                     found_specific_match_idx = -1
 
                     for i, el_handle_candidate in enumerate(matching_elements):
                         try:
                             if await el_handle_candidate.is_disabled():
-                                logger.debug(f"Candidate element #{i+1} is disabled, skipping for input.")
-                                continue # Skip disabled elements for input
+                                logger.debug(
+                                    f"Candidate element #{i + 1} is disabled, skipping for input."
+                                )
+                                continue  # Skip disabled elements for input
 
                             # Compare with stored attributes
                             candidate_id = await el_handle_candidate.get_attribute("id")
-                            candidate_name = await el_handle_candidate.get_attribute("name")
-                            candidate_value = await el_handle_candidate.get_attribute("value")
-                            candidate_role = await el_handle_candidate.get_attribute("role")
-                            candidate_aria_label = await el_handle_candidate.get_attribute("aria-label")
-                            candidate_placeholder = await el_handle_candidate.get_attribute("placeholder")
+                            candidate_name = await el_handle_candidate.get_attribute(
+                                "name"
+                            )
+                            await el_handle_candidate.get_attribute("value")
+                            candidate_role = await el_handle_candidate.get_attribute(
+                                "role"
+                            )
+                            candidate_aria_label = (
+                                await el_handle_candidate.get_attribute("aria-label")
+                            )
+                            candidate_placeholder = (
+                                await el_handle_candidate.get_attribute("placeholder")
+                            )
                             # candidate_text = (await el_handle_candidate.text_content() or "").strip() # Usually not for input value
 
-                            matches_criteria = True # Assume match
-                            if attr_id_val is not None and candidate_id != attr_id_val: matches_criteria = False
-                            elif attr_name_val is not None and candidate_name != attr_name_val: matches_criteria = False
-                            elif attr_role_val is not None and candidate_role != attr_role_val: matches_criteria = False
-                            elif attr_aria_label_val is not None and candidate_aria_label != attr_aria_label_val: matches_criteria = False
-                            elif attr_placeholder_val is not None and candidate_placeholder != attr_placeholder_val: matches_criteria = False
+                            matches_criteria = True  # Assume match
+                            if attr_id_val is not None and candidate_id != attr_id_val:
+                                matches_criteria = False
+                            elif (
+                                attr_name_val is not None
+                                and candidate_name != attr_name_val
+                            ):
+                                matches_criteria = False
+                            elif (
+                                attr_role_val is not None
+                                and candidate_role != attr_role_val
+                            ):
+                                matches_criteria = False
+                            elif (
+                                attr_aria_label_val is not None
+                                and candidate_aria_label != attr_aria_label_val
+                            ):
+                                matches_criteria = False
+                            elif (
+                                attr_placeholder_val is not None
+                                and candidate_placeholder != attr_placeholder_val
+                            ):
+                                matches_criteria = False
                             # Add value or text_content checks if relevant for your specific input identification
                             # For example, if a pre-filled value helps identify it, or if element_info.text_content
                             # refers to an associated label that uniquely identifies this input.
@@ -1169,14 +1239,16 @@ class Controller(Generic[Context]):
                                 logger.info(
                                     f"Disambiguated for input to non-disabled element #{i + 1} of {len(matching_elements)} for index {params.index} using stored attributes."
                                 )
-                                break # Found a suitable non-disabled match
+                                break  # Found a suitable non-disabled match
                         except Exception as eval_err:
                             logger.warning(
                                 f"Error evaluating attributes for input candidate element #{i + 1}: {eval_err}"
                             )
                             continue
-                    
-                    if not final_element_handle: # Disambiguation failed to find a specific non-disabled match
+
+                    if (
+                        not final_element_handle
+                    ):  # Disambiguation failed to find a specific non-disabled match
                         logger.warning(
                             f"Could not uniquely disambiguate a non-disabled input element for index {params.index}. Falling back to the first non-disabled element if any, else first overall."
                         )
@@ -1188,31 +1260,44 @@ class Controller(Generic[Context]):
                                 first_non_disabled_handle = el_handle_candidate
                                 first_non_disabled_idx = i
                                 break
-                        
+
                         if first_non_disabled_handle:
                             final_element_handle = first_non_disabled_handle
                             found_specific_match_idx = first_non_disabled_idx
-                            logger.info(f"Falling back to first non-disabled element (#{first_non_disabled_idx +1}) for input.")
-                        elif matching_elements: # All were disabled or errored, take the absolute first
+                            logger.info(
+                                f"Falling back to first non-disabled element (#{first_non_disabled_idx + 1}) for input."
+                            )
+                        elif (
+                            matching_elements
+                        ):  # All were disabled or errored, take the absolute first
                             final_element_handle = matching_elements[0]
                             found_specific_match_idx = 0
-                            logger.warning("All candidates were disabled or errored during check. Falling back to the very first element for input. This might fail.")
+                            logger.warning(
+                                "All candidates were disabled or errored during check. Falling back to the very first element for input. This might fail."
+                            )
 
                     # Manage disposal list
                     temp_dispose_list = []
                     if final_element_handle:
                         for i, h in enumerate(candidate_handles_to_dispose):
-                            if h == final_element_handle and i == found_specific_match_idx:
+                            if (
+                                h == final_element_handle
+                                and i == found_specific_match_idx
+                            ):
                                 continue
                             temp_dispose_list.append(h)
                     else:
                         temp_dispose_list.extend(candidate_handles_to_dispose)
-                    
+
                     for h_to_dispose in temp_dispose_list:
-                        try: await h_to_dispose.dispose()
-                        except Exception: pass
-                    
-                    candidate_handles_to_dispose = [final_element_handle] if final_element_handle else []
+                        try:
+                            await h_to_dispose.dispose()
+                        except Exception:
+                            pass
+
+                    candidate_handles_to_dispose = (
+                        [final_element_handle] if final_element_handle else []
+                    )
 
                 # --- Proceed with input using final_element_handle ---
                 if not final_element_handle:
@@ -1224,71 +1309,105 @@ class Controller(Generic[Context]):
                     logger.warning(
                         f"Element {params.index} (xpath: {element_info.xpath}) is not visible. Attempting input anyway."
                     )
-                
+
                 # Ensure element is enabled before trying to type/fill
                 if await final_element_handle.is_disabled():
-                    logger.error(f"Target element {params.index} (xpath: {element_info.xpath}) is disabled. Cannot input text.")
-                    return ActionResult(error=f"Element {params.index} is disabled, cannot input text.")
+                    logger.error(
+                        f"Target element {params.index} (xpath: {element_info.xpath}) is disabled. Cannot input text."
+                    )
+                    return ActionResult(
+                        error=f"Element {params.index} is disabled, cannot input text."
+                    )
 
                 # Attempt to click/focus first, then clear, then input
                 try:
-                    await final_element_handle.click(timeout=1000) # Focus the element
+                    await final_element_handle.click(timeout=1000)  # Focus the element
                 except Exception as click_err:
                     logger.debug(
                         f"Pre-input click/focus failed for element {params.index}: {click_err}, continuing with input attempt."
                     )
 
-                try: # Clear existing content
-                    tag_name = (await final_element_handle.evaluate("el => el.tagName")).lower()
-                    is_content_editable = await final_element_handle.evaluate("el => el.isContentEditable")
+                try:  # Clear existing content
+                    tag_name = (
+                        await final_element_handle.evaluate("el => el.tagName")
+                    ).lower()
+                    is_content_editable = await final_element_handle.evaluate(
+                        "el => el.isContentEditable"
+                    )
                     if tag_name in ["input", "textarea"] or is_content_editable:
                         logger.debug(f"Clearing content for element {params.index}")
-                        await final_element_handle.evaluate('el => { if(typeof el.value !== "undefined") el.value = ""; if(el.isContentEditable) el.textContent = ""; }')
+                        await final_element_handle.evaluate(
+                            'el => { if(typeof el.value !== "undefined") el.value = ""; if(el.isContentEditable) el.textContent = ""; }'
+                        )
                 except Exception as clear_e:
-                    logger.warning(f"Could not clear content of element {params.index}: {clear_e}")
+                    logger.warning(
+                        f"Could not clear content of element {params.index}: {clear_e}"
+                    )
 
                 # Try fill, then type, then keyboard
                 try:
-                    logger.debug(f"Attempting Playwright fill for element {params.index}")
+                    logger.debug(
+                        f"Attempting Playwright fill for element {params.index}"
+                    )
                     await final_element_handle.fill(params.text, timeout=3000)
-                    logger.info(f"Successfully input text into element {params.index} using fill.")
+                    logger.info(
+                        f"Successfully input text into element {params.index} using fill."
+                    )
                     return ActionResult(
                         extracted_content=f"Inputted '{params.text}' into element {params.index}",
                         include_in_memory=True,
                     )
                 except PlaywrightError as pe_fill:
-                    logger.warning(f"Playwright fill failed for element {params.index}: {pe_fill}. Trying type.")
-                
+                    logger.warning(
+                        f"Playwright fill failed for element {params.index}: {pe_fill}. Trying type."
+                    )
+
                 try:
-                    logger.debug(f"Attempting Playwright type for element {params.index}")
+                    logger.debug(
+                        f"Attempting Playwright type for element {params.index}"
+                    )
                     await final_element_handle.type(params.text, delay=50, timeout=5000)
-                    logger.info(f"Successfully input text into element {params.index} using type.")
+                    logger.info(
+                        f"Successfully input text into element {params.index} using type."
+                    )
                     return ActionResult(
                         extracted_content=f"Inputted '{params.text}' into element {params.index}",
                         include_in_memory=True,
                     )
                 except PlaywrightError as pe_type:
-                    logger.warning(f"Playwright type failed for element {params.index}: {pe_type}. Trying page keyboard.")
+                    logger.warning(
+                        f"Playwright type failed for element {params.index}: {pe_type}. Trying page keyboard."
+                    )
 
-                try: # Fallback to page-level keyboard typing (less targeted)
-                    logger.debug(f"Attempting page keyboard type for element {params.index}")
+                try:  # Fallback to page-level keyboard typing (less targeted)
+                    logger.debug(
+                        f"Attempting page keyboard type for element {params.index}"
+                    )
                     # Ensure element is focused before global keyboard typing
-                    await final_element_handle.focus(timeout=1000) 
+                    await final_element_handle.focus(timeout=1000)
                     await page.keyboard.type(params.text, delay=50)
-                    logger.info(f"Successfully input text (assumed for element {params.index}) using page keyboard type.")
+                    logger.info(
+                        f"Successfully input text (assumed for element {params.index}) using page keyboard type."
+                    )
                     return ActionResult(
                         extracted_content=f"Inputted '{params.text}' likely into element {params.index} via keyboard",
                         include_in_memory=True,
                     )
                 except Exception as keyboard_e:
-                    logger.error(f"Page keyboard type failed for element {params.index}: {keyboard_e}")
+                    logger.error(
+                        f"Page keyboard type failed for element {params.index}: {keyboard_e}"
+                    )
                     return ActionResult(
-                            error=f"Failed to input text into element at index {params.index} (xpath: {element_info.xpath}) using all methods: Keyboard type error: {keyboard_e}"
+                        error=f"Failed to input text into element at index {params.index} (xpath: {element_info.xpath}) using all methods: Keyboard type error: {keyboard_e}"
                     )
 
             except PlaywrightTimeoutError:
-                logger.error(f"Timeout occurred in input_text for XPath: {element_info.xpath} (index {params.index}).")
-                return ActionResult(error=f"Timeout resolving or operating on element for XPath: {element_info.xpath} (index {params.index}).")
+                logger.error(
+                    f"Timeout occurred in input_text for XPath: {element_info.xpath} (index {params.index})."
+                )
+                return ActionResult(
+                    error=f"Timeout resolving or operating on element for XPath: {element_info.xpath} (index {params.index})."
+                )
             except Exception as e:
                 logger.error(
                     f"General error in input_text for {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}",
@@ -1298,21 +1417,24 @@ class Controller(Generic[Context]):
                     error=f"Failed to input text into element {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}"
                 )
             finally:
-                all_handles_to_check_dispose = [final_element_handle] if final_element_handle else []
+                all_handles_to_check_dispose = (
+                    [final_element_handle] if final_element_handle else []
+                )
                 all_handles_to_check_dispose.extend(candidate_handles_to_dispose)
-                
+
                 unique_handles_to_dispose = []
                 seen_handles = set()
                 for h in all_handles_to_check_dispose:
-                    if h and h not in seen_handles: # ensure h is not None
+                    if h and h not in seen_handles:  # ensure h is not None
                         unique_handles_to_dispose.append(h)
                         seen_handles.add(h)
 
                 for h_to_dispose in unique_handles_to_dispose:
                     try:
                         await h_to_dispose.dispose()
-                    except Exception: pass
-                    
+                    except Exception:
+                        pass
+
         @self.action("Scroll down the page", param_model=ScrollAction)
         async def scroll_down(params: ScrollAction, browser_session: BrowserSession):
             page = await browser_session.get_current_page()
@@ -3026,7 +3148,10 @@ async def main():
             ],
             "highlight_elements": True,
             "wait_between_actions": 1.0,
-            "viewport": {"width": 1920, "height": 1080},  # ADDED: Example large viewport
+            "viewport": {
+                "width": 1920,
+                "height": 1080,
+            },  # ADDED: Example large viewport
         }
     )
 

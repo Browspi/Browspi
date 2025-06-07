@@ -6,6 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 from PyPDF2 import PdfReader
 
@@ -104,12 +105,10 @@ async def main():
     if not os.getenv("OPENAI_API_KEY"):
         print("Error: OPENAI_API_KEY not found.")
         return
-    from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
 
-    task = (
-    """
+    task = """
     You are an AI Job Application Assistant. Your primary goal is to find suitable job openings on LinkedIn that match the skills and experience detailed in the provided CV, and then apply to those jobs.
 
     **Overall Workflow:**
@@ -158,7 +157,6 @@ async def main():
     * **Form Submission Issues:** If an application submission fails, re-examine the form for any highlighted errors or missing required fields before attempting to submit again.
     * **Be Methodical:** Break down complex forms into smaller, logical steps.
     """
-    )
 
     task = task.replace("{{LINKEDIN_USERNAME}}", os.getenv("LINKEDIN_USERNAME"))
     task = task.replace("{{LINKEDIN_PASSWORD}}", os.getenv("LINKEDIN_PASSWORD"))
