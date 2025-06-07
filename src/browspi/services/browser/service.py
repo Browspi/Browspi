@@ -245,7 +245,7 @@ class BrowserLaunchPersistentContextArgs(BrowserLaunchArgs, BrowserContextArgs):
     user_data_dir: Optional[Union[str, Path]] = Path("").expanduser()
 
 
-class BrowserProfile(
+class BrowserConfig(
     BrowserLaunchPersistentContextArgs, BrowserLaunchArgs, BrowserNewContextArgs
 ):
     model_config = ConfigDict(
@@ -339,10 +339,10 @@ class BrowserProfile(
             self.viewport = None
 
 
-DEFAULT_BROWSER_PROFILE = BrowserProfile()
+DEFAULT_BROWSER_PROFILE = BrowserConfig()
 
 
-# --- Agent Views (Simplified) ---
+# --- WebAutomator Views (Simplified) ---
 @dataclass
 class TabInfo:
     page_id: int
@@ -379,9 +379,9 @@ def _log_pretty_url(s: str, max_len: int | None = 22) -> str:
 
 
 # --- Browser Session ---
-class BrowserSession(BaseModel):
+class WebNavigator(BaseModel):
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True, frozen=False)
-    browser_profile: BrowserProfile = Field(default_factory=BrowserProfile)
+    browser_profile: BrowserConfig = Field(default_factory=BrowserConfig)
     playwright: Optional[Any] = Field(default=None, exclude=True)
     browser: Optional[PlaywrightBrowser] = Field(default=None, exclude=True)
     browser_context: Optional[PlaywrightBrowserContext] = Field(
@@ -402,7 +402,7 @@ class BrowserSession(BaseModel):
             return []
         return list(self.browser_context.pages)
 
-    async def start(self) -> "BrowserSession":
+    async def start(self) -> "WebNavigator":
         self.browser_profile.prepare_user_data_dir()
         self.browser_profile.detect_display_configuration()
         if not self.playwright:
@@ -420,7 +420,7 @@ class BrowserSession(BaseModel):
             user_data_dir_to_launch = persistent_kwargs.pop("user_data_dir", None)
             if not user_data_dir_to_launch:
                 raise ValueError(
-                    "user_data_dir must be set in BrowserProfile for persistent context and was not found in launch kwargs."
+                    "user_data_dir must be set in BrowserConfig for persistent context and was not found in launch kwargs."
                 )
             user_data_dir_path = Path(user_data_dir_to_launch)
             self.browser_context = (
@@ -454,7 +454,7 @@ class BrowserSession(BaseModel):
 
         self.initialized = True
         logger.info(
-            f"BrowserSession started. Using {'persistent context at ' + str(self.browser_profile.user_data_dir) if self.browser_profile.user_data_dir and self.browser_profile.executable_path else 'new context'}."
+            f"WebNavigator started. Using {'persistent context at ' + str(self.browser_profile.user_data_dir) if self.browser_profile.user_data_dir and self.browser_profile.executable_path else 'new context'}."
         )
         return self
 
@@ -467,9 +467,9 @@ class BrowserSession(BaseModel):
             if self.playwright:
                 await self.playwright.stop()  # type: ignore
         self.initialized = False
-        logger.info("BrowserSession stopped.")
+        logger.info("WebNavigator stopped.")
 
-    async def __aenter__(self) -> "BrowserSession":
+    async def __aenter__(self) -> "WebNavigator":
         return await self.start()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

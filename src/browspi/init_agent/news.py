@@ -7,9 +7,9 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from browspi.main import (
-    Agent,
-    AgentSettings,
-    Controller,
+    WebAutomator,
+    AutomationConfig,
+    ActionManager,
     load_dotenv,
     logging,
 )
@@ -19,7 +19,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-new_controller = Controller()
+new_controller = ActionManager()
 
 
 class New(BaseModel):
@@ -71,7 +71,7 @@ async def main():
             "highlight_elements": True,
         }
     )
-    current_as = AgentSettings(
+    current_as = AutomationConfig(
         use_vision=True,
         max_actions_per_step=3,
         tool_calling_method="tools",
@@ -81,7 +81,7 @@ async def main():
             f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_llm_conversation_history.json",
         ),
     )
-    agent = Agent(
+    agent = WebAutomator(
         task=task,
         llm=llm,
         agent_settings=current_as,
@@ -90,12 +90,12 @@ async def main():
     )
     try:
         print(f"🚀 Starting agent task: {task}")
-        history = await agent.run(max_steps=50)
-        print("\n--- Agent Run History ---")
+        history = await agent.start_task(max_steps=50)
+        print("\n--- WebAutomator Run History ---")
         if history.history:
             for i, hist_item in enumerate(history.history):
                 print(
-                    f"\n--- History Step {i + 1} (Agent Step {hist_item.metadata.get('step', 'N/A') if hist_item.metadata else 'N/A'}) ---"
+                    f"\n--- History Step {i + 1} (WebAutomator Step {hist_item.metadata.get('step', 'N/A') if hist_item.metadata else 'N/A'}) ---"
                 )
                 if hist_item.model_output:
                     cs = hist_item.model_output.current_state
@@ -127,7 +127,7 @@ async def main():
         if final_content:
             print(f"\n✅ Final Result: {final_content}")
         else:
-            print("\n Agent did not complete successfully or produce a final result.")
+            print("\n WebAutomator did not complete successfully or produce a final result.")
     except Exception as e:
         print(f"Error during agent execution: {e}")
         logger.error("Main execution error", exc_info=True)

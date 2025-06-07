@@ -11,11 +11,11 @@ from pydantic import BaseModel
 from PyPDF2 import PdfReader
 
 from browspi.main import (
-    ActionResult,
-    Agent,
-    AgentSettings,
-    BrowserSession,
-    Controller,
+    StepResult,
+    WebAutomator,
+    AutomationConfig,
+    WebNavigator,
+    ActionManager,
     load_dotenv,
     logging,
 )
@@ -25,7 +25,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-job_controller = Controller()
+job_controller = ActionManager()
 
 # NOTE: This is the path to your cv file
 CV = Path.cwd() / "LiamHo_CV.pdf"
@@ -52,15 +52,15 @@ async def save_jobs(job: Job):  # Changed to async def
     with open("jobs.csv", "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([job.title, job.company, job.link, job.salary, job.location])
-    # Return ActionResult for consistency, though the framework can handle string returns too
-    return ActionResult(extracted_content="Saved job to file")
+    # Return StepResult for consistency, though the framework can handle string returns too
+    return StepResult(extracted_content="Saved job to file")
 
 
 @job_controller.action("Read jobs from file")
 async def read_jobs():  # Changed to async def
     with open("jobs.csv") as f:
         content = f.read()
-    return ActionResult(extracted_content=content, include_in_memory=True)
+    return StepResult(extracted_content=content, include_in_memory=True)
 
 
 @job_controller.action("Read my cv for context to fill forms")
@@ -71,34 +71,34 @@ async def read_cv():  # Changed to async def
         text += page.extract_text() or ""
     # logger.info(f"Read cv with {len(text)} characters")
     logger.info(f"{text}")
-    return ActionResult(extracted_content=text, include_in_memory=True)
+    return StepResult(extracted_content=text, include_in_memory=True)
 
 
 @job_controller.action(
     "Upload cv to element - call this function to upload if element is not found, try with different index of the same upload element",
 )
-async def upload_cv(index: int, browser_session: BrowserSession):
+async def upload_cv(index: int, browser_session: WebNavigator):
     path = str(CV.absolute())
     file_upload_dom_el = await browser_session.find_file_upload_element_by_index(index)
 
     if file_upload_dom_el is None:
         logger.info(f"No file upload element found at index {index}")
-        return ActionResult(error=f"No file upload element found at index {index}")
+        return StepResult(error=f"No file upload element found at index {index}")
 
     file_upload_el = await browser_session.get_locate_element(file_upload_dom_el)
 
     if file_upload_el is None:
         logger.info(f"No file upload element found at index {index}")
-        return ActionResult(error=f"No file upload element found at index {index}")
+        return StepResult(error=f"No file upload element found at index {index}")
 
     try:
         await file_upload_el.set_input_files(path)
         msg = f'Successfully uploaded file "{path}" to index {index}'
         logger.info(msg)
-        return ActionResult(extracted_content=msg)
+        return StepResult(extracted_content=msg)
     except Exception as e:
         logger.debug(f"Error in set_input_files: {str(e)}")
-        return ActionResult(error=f"Failed to upload file to index {index}")
+        return StepResult(error=f"Failed to upload file to index {index}")
 
 
 async def main():
@@ -184,7 +184,7 @@ async def main():
             "highlight_elements": True,
         }
     )
-    current_as = AgentSettings(
+    current_as = AutomationConfig(
         use_vision=True,
         max_actions_per_step=3,
         tool_calling_method="tools",
@@ -194,7 +194,7 @@ async def main():
             f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_llm_conversation_history.json",
         ),
     )
-    agent = Agent(
+    agent = WebAutomator(
         task=task,
         llm=llm,
         agent_settings=current_as,
@@ -203,12 +203,12 @@ async def main():
     )
     try:
         print(f"🚀 Starting agent task: {task}")
-        history = await agent.run(max_steps=50)
-        print("\n--- Agent Run History ---")
+        history = await agent.start_task(max_steps=50)
+        print("\n--- WebAutomator Run History ---")
         if history.history:
             for i, hist_item in enumerate(history.history):
                 print(
-                    f"\n--- History Step {i + 1} (Agent Step {hist_item.metadata.get('step', 'N/A') if hist_item.metadata else 'N/A'}) ---"
+                    f"\n--- History Step {i + 1} (WebAutomator Step {hist_item.metadata.get('step', 'N/A') if hist_item.metadata else 'N/A'}) ---"
                 )
                 if hist_item.model_output:
                     cs = hist_item.model_output.current_state
@@ -240,7 +240,7 @@ async def main():
         if final_content:
             print(f"\n✅ Final Result: {final_content}")
         else:
-            print("\n Agent did not complete successfully or produce a final result.")
+            print("\n WebAutomator did not complete successfully or produce a final result.")
     except Exception as e:
         print(f"Error during agent execution: {e}")
         logger.error("Main execution error", exc_info=True)

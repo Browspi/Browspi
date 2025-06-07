@@ -60,8 +60,8 @@ from typing_extensions import (
 # For this example, we'll mock them or define simplified versions if not provided
 # from browspi.services.browser.service import (
 #     DEFAULT_BROWSER_PROFILE,
-#     BrowserProfile,
-#     BrowserSession, # This will be the user's BrowserSession
+#     BrowserConfig,
+#     WebNavigator, # This will be the user's WebNavigator
 #     BrowserStateSummary,
 # )
 
@@ -139,7 +139,7 @@ class BrowserStateSummary(BaseModel):
         return "\n".join(lines)
 
 
-class BrowserProfile(BaseModel):
+class BrowserConfig(BaseModel):
     user_data_dir: Optional[str] = None
     executable_path: Optional[str] = None
     headless: bool = True
@@ -166,11 +166,11 @@ class BrowserProfile(BaseModel):
     viewport: Optional[Dict[str, int]] = None
 
 
-DEFAULT_BROWSER_PROFILE = BrowserProfile()
+DEFAULT_BROWSER_PROFILE = BrowserConfig()
 
 
-class BrowserSession:  # User's BrowserSession
-    def __init__(self, browser_profile: BrowserProfile):
+class WebNavigator:  # User's WebNavigator
+    def __init__(self, browser_profile: BrowserConfig):
         self.browser_profile = browser_profile
         self.playwright_context: Optional[Any] = (
             None  # playwright.async_api.BrowserContext
@@ -647,7 +647,7 @@ def check_env_variables(keys: List[str], any_or_all=all) -> bool:
     return any_or_all(os.getenv(key, "").strip() for key in keys)
 
 
-class ActionResult(BaseModel):
+class StepResult(BaseModel):
     is_done: bool = False
     success: Optional[bool] = None
     extracted_content: Optional[str] = None
@@ -789,7 +789,7 @@ class ActionRegistry(BaseModel):
         return create_model("DynamicActionModel", __base__=ActionModel, **fields)  # type: ignore
 
 
-class Controller(Generic[Context]):
+class ActionManager(Generic[Context]):
     def __init__(
         self,
         exclude_actions: List[str] = [],
@@ -812,7 +812,7 @@ class Controller(Generic[Context]):
             )
 
     async def _custom_done_action_func(self, params: BaseModel):
-        return ActionResult(
+        return StepResult(
             is_done=True,
             success=params.success,  # type: ignore
             extracted_content=params.data.model_dump_json(),  # type: ignore
@@ -855,38 +855,38 @@ class Controller(Generic[Context]):
 
     def _register_default_actions(self):
         @self.action("Navigate to a URL", param_model=GoToUrlAction)
-        async def go_to_url(params: GoToUrlAction, browser_session: BrowserSession):
+        async def go_to_url(params: GoToUrlAction, browser_session: WebNavigator):
             await browser_session.navigate(params.url)
-            return ActionResult(
+            return StepResult(
                 extracted_content=f"Navigated to {params.url}", include_in_memory=True
             )
 
         @self.action("Search Google", param_model=SearchGoogleAction)
         async def search_google(
-            params: SearchGoogleAction, browser_session: BrowserSession
+            params: SearchGoogleAction, browser_session: WebNavigator
         ):
             await browser_session.navigate(
                 f"https://www.google.com/search?q={params.query.replace(' ', '+')}"
             )
-            return ActionResult(
+            return StepResult(
                 extracted_content=f"Searched Google for: {params.query}",
                 include_in_memory=True,
             )
 
         @self.action("Click an element by its index", param_model=ClickElementAction)
         async def click_element_by_index(
-            params: ClickElementAction, browser_session: BrowserSession
+            params: ClickElementAction, browser_session: WebNavigator
         ):
             logger.info(f"Attempting to click element with index: {params.index}")
             if not browser_session._cached_browser_state_summary:
-                return ActionResult(
+                return StepResult(
                     error=f"Browser state not yet summarized. Cannot find element {params.index}"
                 )
 
             state = browser_session._cached_browser_state_summary
 
             if params.index not in state.selector_map:  # Check if index exists first
-                return ActionResult(
+                return StepResult(
                     error=f"Element with index {params.index} not found in selector_map."
                 )
 
@@ -907,7 +907,7 @@ class Controller(Generic[Context]):
                 )  # Add all to dispose list initially
 
                 if not matching_elements:
-                    return ActionResult(
+                    return StepResult(
                         error=f"No elements found for XPath: {element_info.xpath} (index {params.index})."
                     )
 
@@ -1027,7 +1027,7 @@ class Controller(Generic[Context]):
                         candidate_handles_to_dispose = []
 
                 if not final_element_handle:
-                    return ActionResult(
+                    return StepResult(
                         error=f"Could not obtain a specific element handle for index {params.index} (xpath: {element_info.xpath})."
                     )
 
@@ -1044,7 +1044,7 @@ class Controller(Generic[Context]):
                     logger.info(
                         f"Successfully clicked element {params.index} using Playwright click."
                     )
-                    return ActionResult(
+                    return StepResult(
                         extracted_content=f"Clicked element at index {params.index} ({element_info.tag_name})",
                         include_in_memory=True,
                     )
@@ -1065,7 +1065,7 @@ class Controller(Generic[Context]):
                     logger.info(
                         f"Successfully clicked element {params.index} using JavaScript click."
                     )
-                    return ActionResult(
+                    return StepResult(
                         extracted_content=f"Clicked element at index {params.index} ({element_info.tag_name}) via JS",
                         include_in_memory=True,
                     )
@@ -1073,14 +1073,14 @@ class Controller(Generic[Context]):
                     logger.error(
                         f"JavaScript click failed for element {params.index}: {js_e}"
                     )
-                    return ActionResult(
+                    return StepResult(
                         error=f"Failed to click element at index {params.index} (xpath: {element_info.xpath}) using both methods: JS click error: {js_e}"
                     )
             except PlaywrightTimeoutError:  # This timeout is for page level operations if any were added before element_handles
                 logger.error(
                     f"Timeout occurred in click_element_by_index for XPath: {element_info.xpath} (index {params.index})."
                 )
-                return ActionResult(
+                return StepResult(
                     error=f"Timeout resolving locator or operation for XPath: {element_info.xpath} (index {params.index})."
                 )
             except Exception as e:
@@ -1088,7 +1088,7 @@ class Controller(Generic[Context]):
                     f"General error in click_element_by_index for {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}",
                     exc_info=True,
                 )
-                return ActionResult(
+                return StepResult(
                     error=f"Failed to click element at index {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}"
                 )
             finally:
@@ -1116,18 +1116,18 @@ class Controller(Generic[Context]):
                         pass  # Suppress errors during cleanup
 
         @self.action("Input text into an element", param_model=InputTextAction)
-        async def input_text(params: InputTextAction, browser_session: BrowserSession):
+        async def input_text(params: InputTextAction, browser_session: WebNavigator):
             logger.info(
                 f"Attempting to input text '{params.text}' into element with index: {params.index}"
             )
             if not browser_session._cached_browser_state_summary:
-                return ActionResult(
+                return StepResult(
                     error=f"Browser state not yet summarized. Cannot find element {params.index}"
                 )
             state = browser_session._cached_browser_state_summary
 
             if params.index not in state.selector_map:
-                return ActionResult(
+                return StepResult(
                     error=f"Element with index {params.index} not found in selector_map."
                 )
 
@@ -1143,7 +1143,7 @@ class Controller(Generic[Context]):
                 candidate_handles_to_dispose.extend(matching_elements)
 
                 if not matching_elements:
-                    return ActionResult(
+                    return StepResult(
                         error=f"No elements found for XPath: {element_info.xpath} (index {params.index})."
                     )
 
@@ -1301,7 +1301,7 @@ class Controller(Generic[Context]):
 
                 # --- Proceed with input using final_element_handle ---
                 if not final_element_handle:
-                    return ActionResult(
+                    return StepResult(
                         error=f"Could not obtain a specific element handle for input at index {params.index} (xpath: {element_info.xpath})."
                     )
 
@@ -1315,7 +1315,7 @@ class Controller(Generic[Context]):
                     logger.error(
                         f"Target element {params.index} (xpath: {element_info.xpath}) is disabled. Cannot input text."
                     )
-                    return ActionResult(
+                    return StepResult(
                         error=f"Element {params.index} is disabled, cannot input text."
                     )
 
@@ -1353,7 +1353,7 @@ class Controller(Generic[Context]):
                     logger.info(
                         f"Successfully input text into element {params.index} using fill."
                     )
-                    return ActionResult(
+                    return StepResult(
                         extracted_content=f"Inputted '{params.text}' into element {params.index}",
                         include_in_memory=True,
                     )
@@ -1370,7 +1370,7 @@ class Controller(Generic[Context]):
                     logger.info(
                         f"Successfully input text into element {params.index} using type."
                     )
-                    return ActionResult(
+                    return StepResult(
                         extracted_content=f"Inputted '{params.text}' into element {params.index}",
                         include_in_memory=True,
                     )
@@ -1389,7 +1389,7 @@ class Controller(Generic[Context]):
                     logger.info(
                         f"Successfully input text (assumed for element {params.index}) using page keyboard type."
                     )
-                    return ActionResult(
+                    return StepResult(
                         extracted_content=f"Inputted '{params.text}' likely into element {params.index} via keyboard",
                         include_in_memory=True,
                     )
@@ -1397,7 +1397,7 @@ class Controller(Generic[Context]):
                     logger.error(
                         f"Page keyboard type failed for element {params.index}: {keyboard_e}"
                     )
-                    return ActionResult(
+                    return StepResult(
                         error=f"Failed to input text into element at index {params.index} (xpath: {element_info.xpath}) using all methods: Keyboard type error: {keyboard_e}"
                     )
 
@@ -1405,7 +1405,7 @@ class Controller(Generic[Context]):
                 logger.error(
                     f"Timeout occurred in input_text for XPath: {element_info.xpath} (index {params.index})."
                 )
-                return ActionResult(
+                return StepResult(
                     error=f"Timeout resolving or operating on element for XPath: {element_info.xpath} (index {params.index})."
                 )
             except Exception as e:
@@ -1413,7 +1413,7 @@ class Controller(Generic[Context]):
                     f"General error in input_text for {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}",
                     exc_info=True,
                 )
-                return ActionResult(
+                return StepResult(
                     error=f"Failed to input text into element {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}"
                 )
             finally:
@@ -1436,72 +1436,72 @@ class Controller(Generic[Context]):
                         pass
 
         @self.action("Scroll down the page", param_model=ScrollAction)
-        async def scroll_down(params: ScrollAction, browser_session: BrowserSession):
+        async def scroll_down(params: ScrollAction, browser_session: WebNavigator):
             page = await browser_session.get_current_page()
             amount = (
                 params.amount if params.amount is not None else "window.innerHeight"
             )
             await page.evaluate(f"window.scrollBy(0, {amount})")
-            return ActionResult(
+            return StepResult(
                 extracted_content=f"Scrolled down by {params.amount or 'one page'}",
                 include_in_memory=True,
             )
 
         @self.action("Scroll up the page", param_model=ScrollAction)
-        async def scroll_up(params: ScrollAction, browser_session: BrowserSession):
+        async def scroll_up(params: ScrollAction, browser_session: WebNavigator):
             page = await browser_session.get_current_page()
             amount = (
                 params.amount if params.amount is not None else "window.innerHeight"
             )
             await page.evaluate(f"window.scrollBy(0, -{amount})")
-            return ActionResult(
+            return StepResult(
                 extracted_content=f"Scrolled up by {params.amount or 'one page'}",
                 include_in_memory=True,
             )
 
         @self.action("Mark task as done", param_model=DoneAction)
         async def done(params: DoneAction):
-            return ActionResult(
+            return StepResult(
                 is_done=True, success=params.success, extracted_content=params.text
             )
 
         @self.action("Open URL in a new tab", param_model=OpenTabAction)
-        async def open_tab(params: OpenTabAction, browser_session: BrowserSession):
+        async def open_tab(params: OpenTabAction, browser_session: WebNavigator):
             if not browser_session.playwright_context:
                 await browser_session.start()
             if not browser_session.playwright_context:
-                return ActionResult(error="Browser context could not be initialized.")
+                return StepResult(error="Browser context could not be initialized.")
             new_page = await browser_session.playwright_context.new_page()
             await new_page.goto(params.url, wait_until="domcontentloaded")
             browser_session.agent_current_page = new_page
-            return ActionResult(
+            return StepResult(
                 extracted_content=f"Opened new tab with URL: {params.url}",
                 include_in_memory=True,
             )
 
         @self.action("Close an existing tab by its ID", param_model=CloseTabAction)
         async def close_tab_action(
-            params: CloseTabAction, browser_session: BrowserSession
+            params: CloseTabAction, browser_session: WebNavigator
         ):
             await browser_session.close_tab(params.page_id)
-            return ActionResult(
+            return StepResult(
                 extracted_content=f"Closed tab with ID: {params.page_id}",
                 include_in_memory=True,
             )
 
         @self.action("Switch to a specific tab by its ID", param_model=SwitchTabAction)
-        async def switch_tab(params: SwitchTabAction, browser_session: BrowserSession):
+        async def switch_tab(params: SwitchTabAction, browser_session: WebNavigator):
             if not browser_session.playwright_context:
-                return ActionResult(error="Browser context not available.")
+                return StepResult(error="Browser context not available.")
             pages = browser_session.playwright_context.pages
             if 0 <= params.page_id < len(pages):
                 browser_session.agent_current_page = pages[params.page_id]
                 await browser_session.agent_current_page.bring_to_front()
-                return ActionResult(
+                return StepResult(
                     extracted_content=f"Switched to tab ID: {params.page_id}",
                     include_in_memory=True,
                 )
-            return ActionResult(error=f"Tab ID {params.page_id} not found.")
+            return StepResult(error=f"Tab ID {params.page_id} not found.")
 
         @self.action(
             "Extract content from the current page based on a goal",
@@ -1509,7 +1509,7 @@ class Controller(Generic[Context]):
         )
         async def extract_content(
             params: ExtractPageContentAction,
-            browser_session: BrowserSession,
+            browser_session: WebNavigator,
             page_extraction_llm: BaseChatModel,
         ):
             page = await browser_session.get_current_page()
@@ -1558,7 +1558,7 @@ class Controller(Generic[Context]):
                     f"Page scraping error for 'extract_content': {type(e).__name__} - {e}",
                     exc_info=True,
                 )
-                return ActionResult(
+                return StepResult(
                     error=f"Failed to scrape page: {type(e).__name__}",
                     include_in_memory=True,
                 )
@@ -1616,24 +1616,24 @@ class Controller(Generic[Context]):
             else:
                 extracted_data_summary = "page_extraction_llm not configured."
 
-            return ActionResult(
+            return StepResult(
                 extracted_content=extracted_data_summary, include_in_memory=True
             )
 
         @self.action(
             "Send special keys or keyboard shortcuts", param_model=SendKeysAction
         )
-        async def send_keys(params: SendKeysAction, browser_session: BrowserSession):
+        async def send_keys(params: SendKeysAction, browser_session: WebNavigator):
             page = await browser_session.get_current_page()
             await page.keyboard.press(params.keys)
-            return ActionResult(
+            return StepResult(
                 extracted_content=f"Sent keys: {params.keys}", include_in_memory=True
             )
 
         @self.action("Wait for a specified number of seconds", param_model=WaitAction)
         async def wait(params: WaitAction):
             await asyncio.sleep(params.seconds)
-            return ActionResult(
+            return StepResult(
                 extracted_content=f"Waited for {params.seconds} seconds",
                 include_in_memory=True,
             )
@@ -1641,7 +1641,7 @@ class Controller(Generic[Context]):
     async def act(
         self,
         action: ActionModel,
-        browser_session: BrowserSession,
+        browser_session: WebNavigator,
         page_extraction_llm: Optional[BaseChatModel] = None,
         sensitive_data: Optional[Dict[str, str]] = None,
         available_file_paths: Optional[List[str]] = None,
@@ -1649,11 +1649,11 @@ class Controller(Generic[Context]):
     ):
         dumped_action = action.model_dump(exclude_unset=True)
         if not dumped_action:
-            return ActionResult(error="No action in model.")
+            return StepResult(error="No action in model.")
         action_name = list(dumped_action.keys())[0]
         params_obj = dumped_action[action_name]
         if action_name not in self.registry.actions:
-            return ActionResult(error=f"Action '{action_name}' not found.")
+            return StepResult(error=f"Action '{action_name}' not found.")
         registered_action = self.registry.actions[action_name]
         action_kwargs: Dict[str, Any] = {}
         sig = inspect.signature(registered_action.function)
@@ -1724,27 +1724,27 @@ class Controller(Generic[Context]):
             else:
                 result = await registered_action.function(**action_kwargs)
 
-            if isinstance(result, ActionResult):
+            if isinstance(result, StepResult):
                 return result
             return (
-                ActionResult(extracted_content=str(result))
+                StepResult(extracted_content=str(result))
                 if isinstance(result, str)
-                else ActionResult()
+                else StepResult()
             )
         except PlaywrightTimeoutError as pte:
             logger.error(f"Timeout executing action '{action_name}': {pte}")
-            return ActionResult(error=f"Action '{action_name}' timed out: {pte}")
+            return StepResult(error=f"Action '{action_name}' timed out: {pte}")
         except PlaywrightError as e:
             logger.error(f"Playwright error during action {action_name}: {e}")
-            return ActionResult(error=f"Browser error during '{action_name}': {e}")
+            return StepResult(error=f"Browser error during '{action_name}': {e}")
         except ValidationError as e:
             logger.error(
                 f"Validation error for action parameters of '{action_name}': {e}"
             )
-            return ActionResult(error=f"Invalid parameters for '{action_name}': {e}")
+            return StepResult(error=f"Invalid parameters for '{action_name}': {e}")
         except Exception as e:
             logger.error(f"Error in action {action_name}: {e}", exc_info=True)
-            return ActionResult(error=f"Unexpected error in '{action_name}': {e}")
+            return StepResult(error=f"Unexpected error in '{action_name}': {e}")
 
 
 @dataclass
@@ -1932,7 +1932,7 @@ class MessageManager:
         }
         self._add_message_with_tokens(
             HumanMessage(
-                content=f"You must respond with a single tool call to 'AgentOutput'. The arguments to this tool call must be a JSON object matching this structure:\n```json\n{json.dumps(example_agent_output_args, indent=2)}\n```\nAlways provide the `current_state` and at least one `action` in the `action` list."
+                content=f"You must respond with a single tool call to 'NextAction'. The arguments to this tool call must be a JSON object matching this structure:\n```json\n{json.dumps(example_agent_output_args, indent=2)}\n```\nAlways provide the `current_state` and at least one `action` in the `action` list."
             ),
             message_type="init",
         )
@@ -1943,7 +1943,7 @@ class MessageManager:
             tool_calls=[
                 {
                     "id": example_tool_call_id,
-                    "name": "AgentOutput",
+                    "name": "NextAction",
                     "args": example_agent_output_args,
                 }
             ],
@@ -1980,7 +1980,7 @@ class MessageManager:
     def add_state_message(
         self,
         browser_state_summary: BrowserStateSummary,
-        result: list[ActionResult] | None = None,
+        result: list[StepResult] | None = None,
         step_info: Optional[AgentStepInfo] = None,
         use_vision=True,
     ):
@@ -2031,11 +2031,11 @@ class MessageManager:
         else:
             self._add_message_with_tokens(HumanMessage(content=full_state_description))
 
-    def add_model_output(self, model_output: "AgentOutput", tool_call_id: str):
+    def add_model_output(self, model_output: "NextAction", tool_call_id: str):
         tool_calls = [
             {
                 "id": tool_call_id,
-                "name": "AgentOutput",
+                "name": "NextAction",
                 "args": model_output.model_dump(exclude_unset=True, exclude_none=True),
             }
         ]
@@ -2115,8 +2115,8 @@ You will be provided with:
 4.  A screenshot of the current page (if vision is enabled).
 5.  The results or errors from your previous action(s).
 
-Your response MUST be a single tool call to the 'AgentOutput' tool.
-The arguments for 'AgentOutput' must be a JSON object with two main keys:
+Your response MUST be a single tool call to the 'NextAction' tool.
+The arguments for 'NextAction' must be a JSON object with two main keys:
     -   "current_state": An object containing your analysis of the current situation.
         -   "evaluation_previous_goal": Briefly evaluate the outcome of your last action(s) (e.g., "Success, found the item", "Failed, element not interactable", "Unknown, page loaded but need to verify").
         -   "memory": Concisely summarize what has been achieved so far and any critical information gathered that is relevant to the overall task. This helps maintain context.
@@ -2166,7 +2166,7 @@ class AgentMessagePrompt:
     def __init__(
         self,
         browser_state_summary: BrowserStateSummary,
-        result: list[ActionResult] | None = None,
+        result: list[StepResult] | None = None,
         include_attributes: list[str] | None = None,
         step_info: Optional[AgentStepInfo] = None,
     ):
@@ -2269,10 +2269,10 @@ class AgentBrain(BaseModel):
     )
 
 
-class AgentOutput(BaseModel):
+class NextAction(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     current_state: AgentBrain = Field(
-        ..., description="Agent's analysis of the current situation."
+        ..., description="WebAutomator's analysis of the current situation."
     )
     action: List[ActionModel] = Field(
         ..., min_length=1, description="List of one or more actions to perform."
@@ -2281,16 +2281,16 @@ class AgentOutput(BaseModel):
     @staticmethod
     def type_with_custom_actions(
         custom_actions_model: Type[ActionModel],
-    ) -> Type["AgentOutput"]:
+    ) -> Type["NextAction"]:
         return create_model(
             "DynamicAgentOutput",
-            __base__=AgentOutput,
+            __base__=NextAction,
             action=(List[custom_actions_model], Field(..., min_length=1)),
-            __module__=AgentOutput.__module__,
+            __module__=NextAction.__module__,
         )  # type: ignore
 
 
-class AgentSettings(BaseModel):
+class AutomationConfig(BaseModel):
     use_vision: bool = True
     save_conversation_path: Optional[str] = None
     max_failures: int = 3
@@ -2315,11 +2315,11 @@ class AgentSettings(BaseModel):
     interrupt_on_page_change_in_multi_act: bool = True
 
 
-class AgentState(BaseModel):
+class AutomatorStatus(BaseModel):
     agent_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     n_steps: int = 0
     consecutive_failures: int = 0
-    last_result: Optional[List[ActionResult]] = None
+    last_result: Optional[List[StepResult]] = None
     history: "AgentHistoryList" = Field(
         default_factory=lambda: AgentHistoryList(history=[])
     )
@@ -2331,16 +2331,16 @@ class AgentState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-class AgentHistory(BaseModel):
+class ExecutionLog(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    model_output: Optional[AgentOutput] = None
-    result: List[ActionResult]
+    model_output: Optional[NextAction] = None
+    result: List[StepResult]
     state: Dict[str, Any]
     metadata: Optional[Dict[str, Any]] = None
 
 
 class AgentHistoryList(BaseModel):
-    history: List[AgentHistory] = Field(default_factory=list)
+    history: List[ExecutionLog] = Field(default_factory=list)
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def is_done(self) -> bool:
@@ -2365,38 +2365,38 @@ class AgentHistoryList(BaseModel):
         )
 
 
-AgentState.model_rebuild()
+AutomatorStatus.model_rebuild()
 
 
-class Agent(Generic[Context]):
+class WebAutomator(Generic[Context]):
     def __init__(
         self,
         task: str,
         llm: BaseChatModel,
-        browser_session: Optional[BrowserSession] = None,
-        controller: Optional[Controller[Context]] = None,
+        browser_session: Optional[WebNavigator] = None,
+        controller: Optional[ActionManager[Context]] = None,
         initial_actions: Optional[List[Dict[str, Dict[str, Any]]]] = None,
         sensitive_data: Optional[Dict[str, str]] = None,
         context: Optional[Context] = None,
-        agent_settings: Optional[AgentSettings] = None,
-        browser_profile: Optional[BrowserProfile] = None,
-        injected_agent_state: Optional[AgentState] = None,
+        agent_settings: Optional[AutomationConfig] = None,
+        browser_profile: Optional[BrowserConfig] = None,
+        injected_agent_state: Optional[AutomatorStatus] = None,
     ):
         self.task = task
         self.llm = llm
-        self.controller = controller or Controller()
+        self.controller = controller or ActionManager()
         self.sensitive_data = sensitive_data
         self.version = "main.py-refactored-0.8"
-        self.settings = agent_settings or AgentSettings()
-        self.state = injected_agent_state or AgentState()
+        self.settings = agent_settings or AutomationConfig()
+        self.state = injected_agent_state or AutomatorStatus()
 
-        self.browser_session = browser_session or BrowserSession(
+        self.browser_session = browser_session or WebNavigator(
             browser_profile=(browser_profile or DEFAULT_BROWSER_PROFILE)
         )
         self.context = context
 
         self.ActionModelType = self.controller.registry.create_action_model()
-        self.AgentOutputType = AgentOutput.type_with_custom_actions(
+        self.AgentOutputType = NextAction.type_with_custom_actions(
             self.ActionModelType
         )
 
@@ -2501,7 +2501,7 @@ class Agent(Generic[Context]):
 
     async def get_next_action(
         self, input_messages: List[BaseMessage]
-    ) -> Tuple[AgentOutput, Optional[str]]:
+    ) -> Tuple[NextAction, Optional[str]]:
         llm_to_invoke = self.llm
         tool_call_id_from_llm: Optional[str] = None
 
@@ -2527,7 +2527,7 @@ class Agent(Generic[Context]):
             )
 
         raw_response_message: BaseMessage = await llm_to_invoke.ainvoke(input_messages)  # type: ignore
-        model_output_obj: AgentOutput
+        model_output_obj: NextAction
 
         if (
             hasattr(raw_response_message, "tool_calls")
@@ -2550,7 +2550,7 @@ class Agent(Generic[Context]):
                 model_output_obj = self.AgentOutputType(**args_dict)
             except (json.JSONDecodeError, ValidationError) as e:
                 logger.error(
-                    f"Failed to parse/validate AgentOutput from tool args: {e}. Raw Args: {raw_args}"
+                    f"Failed to parse/validate NextAction from tool args: {e}. Raw Args: {raw_args}"
                 )
                 raise ValueError(
                     f"Invalid arguments for tool '{agent_output_tool_name}': {e}. Args: {raw_args}"
@@ -2588,10 +2588,10 @@ class Agent(Generic[Context]):
                 model_output_obj = self.AgentOutputType(**json.loads(content_str))
             except (json.JSONDecodeError, ValidationError) as e:
                 logger.error(
-                    f"Failed to parse LLM string content as AgentOutput: {e}. Content: {raw_response_message.content}"
+                    f"Failed to parse LLM string content as NextAction: {e}. Content: {raw_response_message.content}"
                 )
                 raise ValueError(
-                    f"LLM response content could not be parsed into AgentOutput structure: {e}. Content: {content_str}"
+                    f"LLM response content could not be parsed into NextAction structure: {e}. Content: {content_str}"
                 ) from e
         else:
             raise ValueError(
@@ -2601,8 +2601,8 @@ class Agent(Generic[Context]):
         log_response(model_output_obj)
         return model_output_obj, tool_call_id_from_llm
 
-    async def multi_act(self, actions: List[ActionModel]) -> List[ActionResult]:
-        results: List[ActionResult] = []
+    async def multi_act(self, actions: List[ActionModel]) -> List[StepResult]:
+        results: List[StepResult] = []
 
         initial_hashes_url = None
         initial_hashes_set = set()
@@ -2618,8 +2618,8 @@ class Agent(Generic[Context]):
         for i, action_model_instance in enumerate(actions):
             if self.state.stopped:
                 results.append(
-                    ActionResult(
-                        error="Agent stopped during action sequence.",
+                    StepResult(
+                        error="WebAutomator stopped during action sequence.",
                         include_in_memory=True,
                     )
                 )
@@ -2635,12 +2635,12 @@ class Agent(Generic[Context]):
                     except ValidationError as e:
                         error_msg = f"Invalid action structure for action {i + 1} in sequence: {e}. Action data: {current_action_model}"
                         logger.error(error_msg)
-                        results.append(ActionResult(error=error_msg))
+                        results.append(StepResult(error=error_msg))
                         break
                 else:
                     error_msg = f"Action {i + 1} in sequence is not a valid ActionModel or dictionary. Got type: {type(current_action_model)}"
                     logger.error(error_msg)
-                    results.append(ActionResult(error=error_msg))
+                    results.append(StepResult(error=error_msg))
                     break
 
             page_extraction_llm = self.settings.page_extraction_llm or self.llm
@@ -2689,7 +2689,7 @@ class Agent(Generic[Context]):
                             f"URL changed from '{initial_hashes_url}' to '{current_url_after_action}' after action {i + 1}. Interrupting multi-action step for re-evaluation."
                         )
                         results.append(
-                            ActionResult(
+                            StepResult(
                                 extracted_content="Page URL changed, re-evaluating.",
                                 include_in_memory=True,
                             )
@@ -2700,7 +2700,7 @@ class Agent(Generic[Context]):
                             f"DOM structure significantly changed on URL '{initial_hashes_url}' after action {i + 1}. Interrupting multi-action step for re-evaluation."
                         )
                         results.append(
-                            ActionResult(
+                            StepResult(
                                 extracted_content="DOM changed, re-evaluating.",
                                 include_in_memory=True,
                             )
@@ -2721,19 +2721,19 @@ class Agent(Generic[Context]):
                 )
         return results
 
-    async def _handle_step_error(self, error: Exception) -> List[ActionResult]:
+    async def _handle_step_error(self, error: Exception) -> List[StepResult]:
         error_msg = f"{type(error).__name__}: {str(error)}"
         logger.error(f"Step execution failed: {error_msg}", exc_info=True)
         self.state.consecutive_failures += 1
-        return [ActionResult(error=error_msg, include_in_memory=True)]
+        return [StepResult(error=error_msg, include_in_memory=True)]
 
     async def step(self, step_info: Optional[AgentStepInfo] = None):
         self.state.n_steps += 1
         logger.info(f"--- Step {self.state.n_steps} ---")
 
         browser_state_summary: Optional[BrowserStateSummary] = None
-        model_decision_output: Optional[AgentOutput] = None
-        action_execution_results: List[ActionResult] = []
+        model_decision_output: Optional[NextAction] = None
+        action_execution_results: List[StepResult] = []
         tool_call_id_for_this_step: Optional[str] = None
 
         try:
@@ -2781,7 +2781,7 @@ class Agent(Generic[Context]):
             else:
                 logger.warning("LLM decided no actions or action list was empty.")
                 action_execution_results = [
-                    ActionResult(
+                    StepResult(
                         error="LLM provided no actions.", include_in_memory=True
                     )
                 ]
@@ -2822,7 +2822,7 @@ class Agent(Generic[Context]):
         finally:
             if browser_state_summary and model_decision_output:
                 self.state.history.history.append(
-                    AgentHistory(
+                    ExecutionLog(
                         model_output=model_decision_output,
                         result=action_execution_results,
                         state={
@@ -2843,7 +2843,7 @@ class Agent(Generic[Context]):
                 and action_execution_results
             ):
                 self.state.history.history.append(
-                    AgentHistory(
+                    ExecutionLog(
                         model_output=None,
                         result=action_execution_results,
                         state={
@@ -2859,13 +2859,13 @@ class Agent(Generic[Context]):
                     )
                 )
 
-    async def run(
+    async def start_task(
         self,
         max_steps: int = 100,
-        on_step_start: Optional[Callable[["Agent"], Awaitable[None]]] = None,
-        on_step_end: Optional[Callable[["Agent"], Awaitable[None]]] = None,
+        on_step_start: Optional[Callable[["WebAutomator"], Awaitable[None]]] = None,
+        on_step_end: Optional[Callable[["WebAutomator"], Awaitable[None]]] = None,
     ) -> AgentHistoryList:
-        logger.info(f"🚀 Starting task: {self.task} (Agent v{self.version})")
+        logger.info(f"🚀 Starting task: {self.task} (WebAutomator v{self.version})")
 
         if self.initial_actions:
             logger.info(f"Executing initial actions: {self.initial_actions}")
@@ -2883,7 +2883,7 @@ class Agent(Generic[Context]):
                         )
 
                 self.state.history.history.append(
-                    AgentHistory(
+                    ExecutionLog(
                         model_output=None,
                         result=self.state.last_result,
                         state={
@@ -2901,16 +2901,16 @@ class Agent(Generic[Context]):
             actual_step_num = self.state.n_steps + 1
 
             if self.state.stopped:
-                logger.info("Agent stopped.")
+                logger.info("WebAutomator stopped.")
                 break
 
             if self.state.paused:
-                logger.info("Agent paused. Waiting for resume...")
+                logger.info("WebAutomator paused. Waiting for resume...")
                 await self._external_pause_event.wait()
                 if self.state.stopped:
-                    logger.info("Agent stopped during pause.")
+                    logger.info("WebAutomator stopped during pause.")
                     break
-                logger.info("Agent resumed.")
+                logger.info("WebAutomator resumed.")
 
             if self.state.consecutive_failures >= self.settings.max_failures:
                 logger.error(
@@ -2943,7 +2943,7 @@ class Agent(Generic[Context]):
                 )
 
         logger.info(
-            f"Agent run finished. Total agent steps executed: {self.state.n_steps}"
+            f"WebAutomator run finished. Total agent steps executed: {self.state.n_steps}"
         )
         if self.settings.save_conversation_path:
             self._save_conversation()
@@ -2992,12 +2992,12 @@ class Agent(Generic[Context]):
             action=[final_action],  # type: ignore
         )
 
-        final_action_result = ActionResult(
+        final_action_result = StepResult(
             is_done=True, success=False, extracted_content=reason
         )
 
         self.state.history.history.append(
-            AgentHistory(
+            ExecutionLog(
                 model_output=final_model_output,
                 result=[final_action_result],
                 state={
@@ -3030,7 +3030,7 @@ class Agent(Generic[Context]):
 
             with open(file_path_str, "w", encoding="utf-8") as f:
                 f.write(self.state.history.model_dump_json(indent=2))
-            logger.info(f"Agent history saved to {file_path_str}")
+            logger.info(f"WebAutomator history saved to {file_path_str}")
         except Exception as e:
             logger.error(
                 f"Failed to save conversation to {self.settings.save_conversation_path}: {e}",
@@ -3040,33 +3040,33 @@ class Agent(Generic[Context]):
     async def close(self):
         if self.browser_session and self.browser_session.initialized:
             await self.browser_session.stop()
-        logger.info("Agent closed and browser session stopped.")
+        logger.info("WebAutomator closed and browser session stopped.")
 
     def pause(self):
         self.state.paused = True
         self._external_pause_event.clear()
         logger.info(
-            "Agent execution paused. Call resume() to continue or stop() to terminate."
+            "WebAutomator execution paused. Call resume() to continue or stop() to terminate."
         )
 
     def resume(self):
         if self.state.paused:
             self.state.paused = False
             self._external_pause_event.set()
-            logger.info("Agent execution resumed.")
+            logger.info("WebAutomator execution resumed.")
         else:
-            logger.info("Agent is not paused.")
+            logger.info("WebAutomator is not paused.")
 
     def stop(self):
         self.state.stopped = True
         if self.state.paused:
             self._external_pause_event.set()
         logger.info(
-            "Agent stop requested. The current step will attempt to complete if safe."
+            "WebAutomator stop requested. The current step will attempt to complete if safe."
         )
 
 
-def log_response(response: AgentOutput) -> None:
+def log_response(response: NextAction) -> None:
     emoji = "🤷"
     if response.current_state:
         if response.current_state.evaluation_previous_goal:
@@ -3107,7 +3107,7 @@ def log_response(response: AgentOutput) -> None:
                     f"LLM Action {i + 1}/{len(response.action)} is empty or invalid after model_dump."
                 )
     else:
-        logger.warning("LLM AgentOutput contains no actions.")
+        logger.warning("LLM NextAction contains no actions.")
 
 
 async def main():
@@ -3159,7 +3159,7 @@ async def main():
     conversation_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    current_as = AgentSettings(
+    current_as = AutomationConfig(
         use_vision=True,
         max_actions_per_step=2,
         tool_calling_method="tools",
@@ -3170,24 +3170,24 @@ async def main():
         max_failures=2,
     )
 
-    agent = Agent(
+    agent = WebAutomator(
         task=task,
         llm=llm,
         agent_settings=current_as,
         browser_profile=current_bp,
-        controller=Controller(),
+        controller=ActionManager(),
     )
 
     try:
         logger.info(f"🚀 Starting agent task: {task}")
-        history: AgentHistoryList = await agent.run(max_steps=10)
+        history: AgentHistoryList = await agent.start_task(max_steps=10)
 
-        print("\n--- Agent Run History Summary ---")
+        print("\n--- WebAutomator Run History Summary ---")
         if history.history:
             for i, hist_item in enumerate(history.history):
                 step_metadata = hist_item.metadata or {}
                 print(
-                    f"\n--- History Record for Agent Step ~{step_metadata.get('step', i + 1)} ---"
+                    f"\n--- History Record for WebAutomator Step ~{step_metadata.get('step', i + 1)} ---"
                 )
 
                 if hist_item.model_output:
@@ -3236,13 +3236,13 @@ async def main():
 
         final_content = history.final_result()
         if final_content:
-            print(f"\n✅ Final Result from Agent: {final_content}")
+            print(f"\n✅ Final Result from WebAutomator: {final_content}")
         else:
             if history.is_done() and not history.is_successful():
-                print("\n❌ Agent marked task as done, but reported failure.")
+                print("\n❌ WebAutomator marked task as done, but reported failure.")
             else:
                 print(
-                    "\n❓ Agent did not complete the task successfully or produce a final result within the step limit."
+                    "\n❓ WebAutomator did not complete the task successfully or produce a final result within the step limit."
                 )
 
     except Exception as e:
