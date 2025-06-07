@@ -1,13 +1,13 @@
 import hashlib
 
-from browspi.services.history_tree_processor.view import (
+from browspi.services.dom_change_tracker.view import (
     DOMHistoryElement,
     HashedDomElement,
 )
 from browspi.services.views import DOMElementNode
 
 
-class HistoryTreeProcessor:
+class DomChangeTracker:
     """ "
     Operations on the DOM elements
 
@@ -20,7 +20,7 @@ class HistoryTreeProcessor:
     ) -> DOMHistoryElement:
         from browspi.browser.context import BrowserContext
 
-        parent_branch_path = HistoryTreeProcessor._get_parent_branch_path(dom_element)
+        parent_branch_path = DomChangeTracker._get_parent_branch_path(dom_element)
         css_selector = BrowserContext._enhanced_css_selector_for_element(dom_element)
         return DOMHistoryElement(
             dom_element.tag_name,
@@ -39,13 +39,13 @@ class HistoryTreeProcessor:
     def find_history_element_in_tree(
         dom_history_element: DOMHistoryElement, tree: DOMElementNode
     ) -> DOMElementNode | None:
-        hashed_dom_history_element = HistoryTreeProcessor._hash_dom_history_element(
+        hashed_dom_history_element = DomChangeTracker._hash_dom_history_element(
             dom_history_element
         )
 
         def process_node(node: DOMElementNode):
             if node.highlight_index is not None:
-                hashed_node = HistoryTreeProcessor._hash_dom_element(node)
+                hashed_node = DomChangeTracker._hash_dom_element(node)
                 if hashed_node == hashed_dom_history_element:
                     return node
             for child in node.children:
@@ -61,10 +61,10 @@ class HistoryTreeProcessor:
     def compare_history_element_and_dom_element(
         dom_history_element: DOMHistoryElement, dom_element: DOMElementNode
     ) -> bool:
-        hashed_dom_history_element = HistoryTreeProcessor._hash_dom_history_element(
+        hashed_dom_history_element = DomChangeTracker._hash_dom_history_element(
             dom_history_element
         )
-        hashed_dom_element = HistoryTreeProcessor._hash_dom_element(dom_element)
+        hashed_dom_element = DomChangeTracker._hash_dom_element(dom_element)
 
         return hashed_dom_history_element == hashed_dom_element
 
@@ -72,24 +72,22 @@ class HistoryTreeProcessor:
     def _hash_dom_history_element(
         dom_history_element: DOMHistoryElement,
     ) -> HashedDomElement:
-        branch_path_hash = HistoryTreeProcessor._parent_branch_path_hash(
+        branch_path_hash = DomChangeTracker._parent_branch_path_hash(
             dom_history_element.entire_parent_branch_path
         )
-        attributes_hash = HistoryTreeProcessor._attributes_hash(
+        attributes_hash = DomChangeTracker._attributes_hash(
             dom_history_element.attributes
         )
-        xpath_hash = HistoryTreeProcessor._xpath_hash(dom_history_element.xpath)
+        xpath_hash = DomChangeTracker._xpath_hash(dom_history_element.xpath)
 
         return HashedDomElement(branch_path_hash, attributes_hash, xpath_hash)
 
     @staticmethod
     def _hash_dom_element(dom_element: DOMElementNode) -> HashedDomElement:
-        parent_branch_path = HistoryTreeProcessor._get_parent_branch_path(dom_element)
-        branch_path_hash = HistoryTreeProcessor._parent_branch_path_hash(
-            parent_branch_path
-        )
-        attributes_hash = HistoryTreeProcessor._attributes_hash(dom_element.attributes)
-        xpath_hash = HistoryTreeProcessor._xpath_hash(dom_element.xpath)
+        parent_branch_path = DomChangeTracker._get_parent_branch_path(dom_element)
+        branch_path_hash = DomChangeTracker._parent_branch_path_hash(parent_branch_path)
+        attributes_hash = DomChangeTracker._attributes_hash(dom_element.attributes)
+        xpath_hash = DomChangeTracker._xpath_hash(dom_element.xpath)
         # text_hash = DomTreeProcessor._text_hash(dom_element)
 
         return HashedDomElement(branch_path_hash, attributes_hash, xpath_hash)

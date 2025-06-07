@@ -32,7 +32,9 @@ class DomService:
         self.xpath_cache = {}
 
         self.js_code = (
-            resources.files("browspi.services").joinpath("buildDomTree.js").read_text()
+            resources.files("browspi.services")
+            .joinpath("generatePageMap.js")
+            .read_text()
         )
 
     # region - Clickable elements
@@ -85,7 +87,7 @@ class DomService:
             raise ValueError("The page cannot evaluate javascript code properly")
 
         if self.page.url == "about:blank":
-            # short-circuit if the page is a new empty tab for speed, no need to inject buildDomTree.js
+            # short-circuit if the page is a new empty tab for speed, no need to inject generatePageMap.js
             return (
                 DOMElementNode(
                     tag_name="body",
