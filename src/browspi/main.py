@@ -12,12 +12,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Tuple  # Added Tuple
+from typing import Tuple
 from urllib.parse import urlparse
 from warnings import filterwarnings
 
 from dotenv import load_dotenv
-from langchain_core._api import LangChainBetaWarning  # type: ignore
+from langchain_core._api import LangChainBetaWarning
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -26,18 +26,18 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from playwright.async_api import (  # type: ignore
+from playwright.async_api import (
     ElementHandle,
     FrameLocator,
     Page,
 )
-from playwright.async_api import (  # type: ignore
+from playwright.async_api import (
     Error as PlaywrightError,
 )
-from playwright.async_api import (  # type: ignore
+from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
-from pydantic import (  # type: ignore
+from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
@@ -56,24 +56,9 @@ from typing_extensions import (
     Union,
 )
 
-# Assuming browspi.services.browser.service contains necessary classes
-# For this example, we'll mock them or define simplified versions if not provided
-# from browspi.services.browser.service import (
-#     DEFAULT_BROWSER_PROFILE,
-#     BrowserConfig,
-#     WebNavigator, # This will be the user's WebNavigator
-#     BrowserStateSummary,
-# )
-
-
 filterwarnings("ignore", category=LangChainBetaWarning)
 load_dotenv()
 logger = logging.getLogger(__name__)
-
-
-# --- Simplified/Mocked Browser Service Components ---
-# These should ideally come from your browspi.services.browser.service
-# For the purpose of this example, let's define minimal versions.
 
 
 class DOMElementNode(BaseModel):
@@ -81,28 +66,21 @@ class DOMElementNode(BaseModel):
     tag_name: str
     attributes: Dict[str, Any] = {}
     highlight_index: Optional[int] = None
-    # Add other fields if your selector_map provides them and they are needed
 
 
 class BrowserStateSummary(BaseModel):
     url: str
     title: str
     screenshot: Optional[str] = None
-    tabs: List[Dict[str, Any]] = []  # Simplified
-    element_tree: Optional[Any] = (
-        None  # Simplified, structure depends on your implementation
-    )
-    selector_map: Dict[
-        int, DOMElementNode
-    ] = {}  # Maps index to simplified element info
+    tabs: List[Dict[str, Any]] = []
+    element_tree: Optional[Any] = None
+    selector_map: Dict[int, DOMElementNode] = {}
     pixels_above: Optional[int] = None
     pixels_below: Optional[int] = None
 
     def clickable_elements_to_string(
         self, include_attributes: Optional[List[str]] = None
     ) -> str:
-        # This is a mock. In a real scenario, this would format self.element_tree
-        # or iterate self.selector_map to produce a string representation.
         if not self.selector_map:
             return "No interactive elements found."
 
@@ -128,7 +106,6 @@ class BrowserStateSummary(BaseModel):
             if attr_strings:
                 line += f" [{', '.join(attr_strings)}]"
 
-            # Attempt to get text content if available in attributes
             text_content = element_info.attributes.get(
                 "text_content"
             ) or element_info.attributes.get("aria-label")
@@ -160,7 +137,7 @@ class BrowserConfig(BaseModel):
         ]
     )
     highlight_elements: bool = False
-    wait_between_actions: float = 0.5  # seconds
+    wait_between_actions: float = 0.5
     cookies_file: Optional[str] = None
     storage_state: Optional[str] = None
     viewport: Optional[Dict[str, int]] = None
@@ -169,19 +146,17 @@ class BrowserConfig(BaseModel):
 DEFAULT_BROWSER_PROFILE = BrowserConfig()
 
 
-class WebNavigator:  # User's WebNavigator
+class WebNavigator:
     def __init__(self, browser_profile: BrowserConfig):
         self.browser_profile = browser_profile
-        self.playwright_context: Optional[Any] = (
-            None  # playwright.async_api.BrowserContext
-        )
+        self.playwright_context: Optional[Any] = None
         self.agent_current_page: Optional[Page] = None
         self.initialized: bool = False
         self._cached_browser_state_summary: Optional[BrowserStateSummary] = None
         self._cached_clickable_element_hashes: Optional[Any] = None
 
     async def start(self):
-        from playwright.async_api import async_playwright  # type: ignore
+        from playwright.async_api import async_playwright
 
         p = await async_playwright().start()
 
@@ -196,7 +171,7 @@ class WebNavigator:  # User's WebNavigator
                     executable_path=self.browser_profile.executable_path,
                     args=self.browser_profile.args,
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                    viewport=self.browser_profile.viewport,  # MODIFIED: Pass viewport
+                    viewport=self.browser_profile.viewport,
                 )
                 if self.playwright_context.pages:
                     self.agent_current_page = self.playwright_context.pages[0]
@@ -230,7 +205,7 @@ class WebNavigator:  # User's WebNavigator
         )
         self.playwright_context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            viewport=self.browser_profile.viewport,  # MODIFIED: Pass viewport
+            viewport=self.browser_profile.viewport,
         )
         if self.browser_profile.storage_state and os.path.exists(
             self.browser_profile.storage_state
@@ -256,7 +231,7 @@ class WebNavigator:  # User's WebNavigator
     async def stop(self):
         if self.playwright_context:
             await self.playwright_context.close()
-        # playwright instance p from start() might need to be closed too if stored
+
         logger.info("Browser session stopped.")
 
     async def get_current_page(self) -> Page:
@@ -267,7 +242,7 @@ class WebNavigator:  # User's WebNavigator
                 self.agent_current_page = await self.playwright_context.new_page()
             else:
                 raise PlaywrightError("Browser context not available to get a page.")
-        if not self.agent_current_page:  # Still none
+        if not self.agent_current_page:
             raise PlaywrightError("Failed to get or create a current page.")
         return self.agent_current_page
 
@@ -284,15 +259,14 @@ class WebNavigator:  # User's WebNavigator
 
         selector_map_mock: Dict[int, DOMElementNode] = {}
         try:
-            # A very basic way to get some interactive elements.
             interactive_elements = await page.query_selector_all(
                 'button, a[href], input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [onclick]'
             )
             idx = 0
             for el_handle in interactive_elements:
-                if await el_handle.is_visible():  # Only consider visible elements
+                if await el_handle.is_visible():
                     tag_name = (await el_handle.evaluate("el => el.tagName")).lower()
-                    xpath = await self._get_xpath(el_handle)  # Helper to get XPath
+                    xpath = await self._get_xpath(el_handle)
                     attributes = await el_handle.evaluate(
                         "el => { const attrs = {}; for (let i = 0; i < el.attributes.length; i++) { attrs[el.attributes[i].name] = el.attributes[i].value; } return attrs; }"
                     )
@@ -310,7 +284,6 @@ class WebNavigator:  # User's WebNavigator
         except Exception as e:
             logger.error(f"Error extracting elements for mock selector_map: {e}")
 
-        # Screenshot (optional)
         screenshot_b64 = None
         try:
             screenshot_bytes = await page.screenshot()
@@ -321,21 +294,15 @@ class WebNavigator:  # User's WebNavigator
         summary = BrowserStateSummary(
             url=url,
             title=title,
-            selector_map=selector_map_mock,  # Using the mocked map
+            selector_map=selector_map_mock,
             screenshot=screenshot_b64,
-            # element_tree and other fields would be populated by a more complex DOM analysis
         )
         self._cached_browser_state_summary = summary
 
-        # DOM change detection (simplified)
         if cache_clickable_elements_hashes:
-            current_hashes = {
-                info.xpath for info in selector_map_mock.values()
-            }  # Using xpath as a simple hash
+            current_hashes = {info.xpath for info in selector_map_mock.values()}
             if self._cached_clickable_element_hashes:
-                # Compare current_hashes with self._cached_clickable_element_hashes.hashes
-                # and update is_new in DOMElementNode if your structure supports it.
-                pass  # Placeholder for actual change detection logic
+                pass
             self._cached_clickable_element_hashes = {
                 "url": url,
                 "hashes": current_hashes,
@@ -344,7 +311,6 @@ class WebNavigator:  # User's WebNavigator
         return summary
 
     async def _get_xpath(self, element: ElementHandle) -> str:
-        # Simplified XPath generation. A robust solution is more complex.
         return await element.evaluate(
             """
             el => {
@@ -366,13 +332,13 @@ class WebNavigator:  # User's WebNavigator
         """
         )
 
-    async def close_tab(self, page_id: int):  # page_id here is an index
+    async def close_tab(self, page_id: int):
         if self.playwright_context and 0 <= page_id < len(
             self.playwright_context.pages
         ):
             page_to_close = self.playwright_context.pages[page_id]
             if page_to_close == self.agent_current_page:
-                self.agent_current_page = None  # Will be reset by get_current_page
+                self.agent_current_page = None
             await page_to_close.close()
             logger.info(f"Closed tab with index: {page_id}")
         else:
@@ -435,18 +401,15 @@ class WebNavigator:  # User's WebNavigator
                     root = root.parent
                 return root
 
-            # Recursively search for file input in node and its children
             def find_file_input_recursive(
                 node: DOMElementNode, max_depth: int = 3, current_depth: int = 0
             ) -> DOMElementNode | None:
                 if current_depth > max_depth or not isinstance(node, DOMElementNode):
                     return None
 
-                # Check current element
                 if is_file_input(node):
                     return node
 
-                # Recursively check children
                 if node.children and current_depth < max_depth:
                     for child in node.children:
                         if isinstance(child, DOMElementNode):
@@ -457,11 +420,9 @@ class WebNavigator:  # User's WebNavigator
                                 return result
                 return None
 
-            # Check if current element is a file input
             if is_file_input(candidate_element):
                 return candidate_element
 
-            # Check if it's a label pointing to a file input
             if (
                 candidate_element.tag_name == "label"
                 and candidate_element.attributes.get("for")
@@ -473,12 +434,10 @@ class WebNavigator:  # User's WebNavigator
                 if target_input and is_file_input(target_input):
                     return target_input
 
-            # Recursively check children
             child_result = find_file_input_recursive(candidate_element)
             if child_result:
                 return child_result
 
-            # Check siblings
             if candidate_element.parent:
                 for sibling in candidate_element.parent.children:
                     if sibling is not candidate_element and isinstance(
@@ -496,7 +455,6 @@ class WebNavigator:  # User's WebNavigator
         page = await self.get_current_page()
         current_frame = page
 
-        # Start with the target element and collect all parents
         parents: list[DOMElementNode] = []
         current = element
         while current.parent is not None:
@@ -504,10 +462,8 @@ class WebNavigator:  # User's WebNavigator
             parents.append(parent)
             current = parent
 
-        # Reverse the parents list to process from top to bottom
         parents.reverse()
 
-        # Process all iframe parents in sequence
         iframes = [item for item in parents if item.tag_name == "iframe"]
         for parent in iframes:
             css_selector = self._enhanced_css_selector_for_element(
@@ -528,7 +484,6 @@ class WebNavigator:  # User's WebNavigator
                 ).element_handle()
                 return element_handle
             else:
-                # Try to scroll into view if hidden
                 element_handle = await current_frame.query_selector(css_selector)
                 if element_handle:
                     is_visible = await self._is_visible(element_handle)
@@ -571,11 +526,9 @@ def setup_logging():
         pass
     log_type = os.getenv("browspi_LOGGING_LEVEL", "info").lower()
     if logging.getLogger().hasHandlers():
-        # Clear existing handlers if any, to avoid duplicate logs in interactive environments
         logging.getLogger().handlers = []
 
     root = logging.getLogger()
-    # root.handlers = [] # Ensure handlers are cleared if re-running setup
 
     class ProjectFormatter(logging.Formatter):
         def format(self, record):
@@ -589,24 +542,22 @@ def setup_logging():
 
     console = logging.StreamHandler(sys.stdout)
     if log_type == "result":
-        console.setLevel("RESULT")  # type: ignore
+        console.setLevel("RESULT")
         console.setFormatter(ProjectFormatter("%(message)s"))
     else:
         console.setFormatter(ProjectFormatter("%(levelname)-8s [%(name)s] %(message)s"))
     root.addHandler(console)
     if log_type == "result":
-        root.setLevel("RESULT")  # type: ignore
+        root.setLevel("RESULT")
     elif log_type == "debug":
         root.setLevel(logging.DEBUG)
     else:
         root.setLevel(logging.INFO)
     main_logger = logging.getLogger(__name__)
-    main_logger.propagate = (
-        False  # Prevent passing to root logger if it has other handlers
-    )
-    main_logger.handlers = []  # Clear its own handlers first
-    main_logger.addHandler(console)  # Add the configured console handler
-    main_logger.setLevel(root.level)  # Set its level to the root's level
+    main_logger.propagate = False
+    main_logger.handlers = []
+    main_logger.addHandler(console)
+    main_logger.setLevel(root.level)
 
     third_party_loggers = [
         "httpx",
@@ -618,7 +569,7 @@ def setup_logging():
     ]
     for logger_name in third_party_loggers:
         third_party = logging.getLogger(logger_name)
-        third_party.setLevel(logging.ERROR)  # Or logging.WARNING
+        third_party.setLevel(logging.ERROR)
         third_party.propagate = False
 
 
@@ -663,7 +614,7 @@ class ActionModel(BaseModel):
             if isinstance(value, dict) and "index" in value:
                 return value["index"]
             if hasattr(value, "index") and value.index is not None:
-                return value.index  # type: ignore
+                return value.index
         return None
 
     def set_index(self, index: int):
@@ -673,8 +624,8 @@ class ActionModel(BaseModel):
                 value["index"] = index
                 setattr(self, field_name, value)
                 return
-            if hasattr(value, "index"):  # type: ignore
-                value.index = index  # type: ignore
+            if hasattr(value, "index"):
+                value.index = index
                 return
         logger.warning(f"Could not set index on action: {self}")
 
@@ -757,7 +708,7 @@ class ActionRegistry(BaseModel):
                 page
                 and action.domains
                 and not any(
-                    urlparse(page.url).hostname.endswith(d.lstrip("*."))  # type: ignore
+                    urlparse(page.url).hostname.endswith(d.lstrip("*."))
                     for d in action.domains
                 )
             )
@@ -775,7 +726,7 @@ class ActionRegistry(BaseModel):
                 page
                 and action_info.domains
                 and not any(
-                    urlparse(page.url).hostname.endswith(d.lstrip("*."))  # type: ignore
+                    urlparse(page.url).hostname.endswith(d.lstrip("*."))
                     for d in action_info.domains
                 )
             ):
@@ -783,10 +734,10 @@ class ActionRegistry(BaseModel):
             if page and action_info.page_filter and not action_info.page_filter(page):
                 continue
             fields[name] = (
-                Optional[action_info.param_model],  # type: ignore
+                Optional[action_info.param_model],
                 Field(default=None, description=action_info.description),
             )
-        return create_model("DynamicActionModel", __base__=ActionModel, **fields)  # type: ignore
+        return create_model("DynamicActionModel", __base__=ActionModel, **fields)
 
 
 class ActionManager(Generic[Context]):
@@ -801,21 +752,21 @@ class ActionManager(Generic[Context]):
         if output_model:
 
             class CustomDoneAction(BaseModel):
-                data: output_model  # type: ignore
+                data: output_model
                 success: bool
 
             self.registry.actions["done"] = RegisteredAction(
                 name="done",
                 description="Completes the task with custom output",
-                function=self._custom_done_action_func,  # type: ignore
+                function=self._custom_done_action_func,
                 param_model=CustomDoneAction,
             )
 
     async def _custom_done_action_func(self, params: BaseModel):
         return StepResult(
             is_done=True,
-            success=params.success,  # type: ignore
-            extracted_content=params.data.model_dump_json(),  # type: ignore
+            success=params.success,
+            extracted_content=params.data.model_dump_json(),
         )
 
     def action(
@@ -839,14 +790,14 @@ class ActionManager(Generic[Context]):
                         "page_extraction_llm",
                         "context",
                         "self",
-                    ]  # Added "self"
+                    ]
                 }
-                actual_param_model = create_model(f"{func.__name__}Params", **fields)  # type: ignore
+                actual_param_model = create_model(f"{func.__name__}Params", **fields)
             self.registry.actions[func.__name__] = RegisteredAction(
                 name=func.__name__,
                 description=description,
                 function=func,
-                param_model=actual_param_model,  # type: ignore
+                param_model=actual_param_model,
                 **kwargs,
             )
             return func
@@ -885,7 +836,7 @@ class ActionManager(Generic[Context]):
 
             state = browser_session._cached_browser_state_summary
 
-            if params.index not in state.selector_map:  # Check if index exists first
+            if params.index not in state.selector_map:
                 return StepResult(
                     error=f"Element with index {params.index} not found in selector_map."
                 )
@@ -896,15 +847,12 @@ class ActionManager(Generic[Context]):
             base_locator = page.locator(f"xpath={element_info.xpath}")
 
             final_element_handle: Optional[ElementHandle] = None
-            # Keep track of handles from element_handles() to dispose them
+
             candidate_handles_to_dispose: List[ElementHandle] = []
 
             try:
-                # Corrected: Removed timeout from element_handles()
                 matching_elements = await base_locator.element_handles()
-                candidate_handles_to_dispose.extend(
-                    matching_elements
-                )  # Add all to dispose list initially
+                candidate_handles_to_dispose.extend(matching_elements)
 
                 if not matching_elements:
                     return StepResult(
@@ -947,7 +895,7 @@ class ActionManager(Generic[Context]):
                                 await el_handle_candidate.text_content() or ""
                             ).strip()
 
-                            matches_criteria = True  # Assume match, then disprove
+                            matches_criteria = True
                             if attr_id_val is not None and candidate_id != attr_id_val:
                                 matches_criteria = False
                             elif (
@@ -965,7 +913,7 @@ class ActionManager(Generic[Context]):
                                 and candidate_aria_label != attr_aria_label_val
                             ):
                                 matches_criteria = False
-                            # Only check text_content if it's substantial in stored attributes
+
                             elif (
                                 attr_text_content_val
                                 and candidate_text != attr_text_content_val
@@ -985,45 +933,38 @@ class ActionManager(Generic[Context]):
                             )
                             continue
 
-                    if not final_element_handle:  # Disambiguation failed
+                    if not final_element_handle:
                         logger.warning(
                             f"Could not uniquely disambiguate element for index {params.index}. Falling back to the first element."
                         )
-                        if matching_elements:  # If list is not empty
-                            final_element_handle = matching_elements[
-                                0
-                            ]  # Fallback to the first one
+                        if matching_elements:
+                            final_element_handle = matching_elements[0]
                             found_specific_match_idx = 0
 
-                    # Manage disposal: only keep the final_element_handle, mark others for disposal
                     temp_dispose_list = []
-                    if final_element_handle:  # If a handle was chosen or fell back to
+                    if final_element_handle:
                         for i, h in enumerate(candidate_handles_to_dispose):
                             if (
                                 h == final_element_handle
                                 and i == found_specific_match_idx
-                            ):  # This is the one we're keeping
+                            ):
                                 continue
                             temp_dispose_list.append(h)
-                    else:  # No handle chosen (e.g. all candidates error-ed out during attr check)
+                    else:
                         temp_dispose_list.extend(candidate_handles_to_dispose)
 
                     for h_to_dispose in temp_dispose_list:
                         try:
                             await h_to_dispose.dispose()
                         except Exception:
-                            pass  # Ignore errors on dispose during this cleanup
+                            pass
 
-                    # The candidate_handles_to_dispose list will be fully cleared or managed in the outer finally block.
-                    # For now, final_element_handle is what matters.
                     if (
                         final_element_handle
                         and final_element_handle not in temp_dispose_list
                     ):
-                        candidate_handles_to_dispose = [
-                            final_element_handle
-                        ]  # It's the one we're using
-                    else:  # No valid handle, or it was already marked for disposal.
+                        candidate_handles_to_dispose = [final_element_handle]
+                    else:
                         candidate_handles_to_dispose = []
 
                 if not final_element_handle:
@@ -1076,7 +1017,7 @@ class ActionManager(Generic[Context]):
                     return StepResult(
                         error=f"Failed to click element at index {params.index} (xpath: {element_info.xpath}) using both methods: JS click error: {js_e}"
                     )
-            except PlaywrightTimeoutError:  # This timeout is for page level operations if any were added before element_handles
+            except PlaywrightTimeoutError:
                 logger.error(
                     f"Timeout occurred in click_element_by_index for XPath: {element_info.xpath} (index {params.index})."
                 )
@@ -1092,16 +1033,12 @@ class ActionManager(Generic[Context]):
                     error=f"Failed to click element at index {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}"
                 )
             finally:
-                # General cleanup of any handles that might still be in candidate_handles_to_dispose
-                # and the final_element_handle itself.
                 all_handles_to_check_dispose = []
-                if final_element_handle:  # Add the primary handle used, if any
+                if final_element_handle:
                     all_handles_to_check_dispose.append(final_element_handle)
 
-                # Add any other handles collected (duplicates will be handled by set conversion if needed, or just iterated)
                 all_handles_to_check_dispose.extend(candidate_handles_to_dispose)
 
-                # Unique handles to dispose
                 unique_handles_to_dispose = []
                 seen_handles = set()
                 for h in all_handles_to_check_dispose:
@@ -1113,7 +1050,7 @@ class ActionManager(Generic[Context]):
                     try:
                         await h_to_dispose.dispose()
                     except Exception:
-                        pass  # Suppress errors during cleanup
+                        pass
 
         @self.action("Input text into an element", param_model=InputTextAction)
         async def input_text(params: InputTextAction, browser_session: WebNavigator):
@@ -1148,8 +1085,6 @@ class ActionManager(Generic[Context]):
                     )
 
                 if len(matching_elements) == 1:
-                    # If only one, check if it's disabled. If it's the intended non-disabled input, great.
-                    # If it's disabled but was the only one found by XPath, input might fail but we try.
                     is_sole_candidate_disabled = await matching_elements[
                         0
                     ].is_disabled()
@@ -1162,21 +1097,18 @@ class ActionManager(Generic[Context]):
                             f"XPath {element_info.xpath} for index {params.index} resolved to a unique, non-disabled element."
                         )
                     final_element_handle = matching_elements[0]
-                else:  # Multiple elements found, need to disambiguate
+                else:
                     logger.warning(
                         f"XPath {element_info.xpath} for index {params.index} resolved to {len(matching_elements)} elements. Attempting to disambiguate for input."
                     )
 
-                    # Get attributes from element_info for comparison
                     attr_id_val = element_info.attributes.get("id")
                     attr_name_val = element_info.attributes.get("name")
-                    attr_value_val = element_info.attributes.get(
-                        "value"
-                    )  # Less common for input target, but possible
+                    attr_value_val = element_info.attributes.get("value")
                     attr_role_val = element_info.attributes.get("role")
                     attr_aria_label_val = element_info.attributes.get("aria-label")
                     attr_placeholder_val = element_info.attributes.get("placeholder")
-                    # text_content is usually not for input fields themselves but could be a label associated elsewhere
+
                     (element_info.attributes.get("text_content") or "").strip()
 
                     found_specific_match_idx = -1
@@ -1187,9 +1119,8 @@ class ActionManager(Generic[Context]):
                                 logger.debug(
                                     f"Candidate element #{i + 1} is disabled, skipping for input."
                                 )
-                                continue  # Skip disabled elements for input
+                                continue
 
-                            # Compare with stored attributes
                             candidate_id = await el_handle_candidate.get_attribute("id")
                             candidate_name = await el_handle_candidate.get_attribute(
                                 "name"
@@ -1204,9 +1135,8 @@ class ActionManager(Generic[Context]):
                             candidate_placeholder = (
                                 await el_handle_candidate.get_attribute("placeholder")
                             )
-                            # candidate_text = (await el_handle_candidate.text_content() or "").strip() # Usually not for input value
 
-                            matches_criteria = True  # Assume match
+                            matches_criteria = True
                             if attr_id_val is not None and candidate_id != attr_id_val:
                                 matches_criteria = False
                             elif (
@@ -1229,9 +1159,6 @@ class ActionManager(Generic[Context]):
                                 and candidate_placeholder != attr_placeholder_val
                             ):
                                 matches_criteria = False
-                            # Add value or text_content checks if relevant for your specific input identification
-                            # For example, if a pre-filled value helps identify it, or if element_info.text_content
-                            # refers to an associated label that uniquely identifies this input.
 
                             if matches_criteria:
                                 final_element_handle = el_handle_candidate
@@ -1239,20 +1166,18 @@ class ActionManager(Generic[Context]):
                                 logger.info(
                                     f"Disambiguated for input to non-disabled element #{i + 1} of {len(matching_elements)} for index {params.index} using stored attributes."
                                 )
-                                break  # Found a suitable non-disabled match
+                                break
                         except Exception as eval_err:
                             logger.warning(
                                 f"Error evaluating attributes for input candidate element #{i + 1}: {eval_err}"
                             )
                             continue
 
-                    if (
-                        not final_element_handle
-                    ):  # Disambiguation failed to find a specific non-disabled match
+                    if not final_element_handle:
                         logger.warning(
                             f"Could not uniquely disambiguate a non-disabled input element for index {params.index}. Falling back to the first non-disabled element if any, else first overall."
                         )
-                        # Fallback: try first non-disabled, then first overall if all are disabled or error
+
                         first_non_disabled_handle = None
                         first_non_disabled_idx = -1
                         for i, el_handle_candidate in enumerate(matching_elements):
@@ -1267,16 +1192,13 @@ class ActionManager(Generic[Context]):
                             logger.info(
                                 f"Falling back to first non-disabled element (#{first_non_disabled_idx + 1}) for input."
                             )
-                        elif (
-                            matching_elements
-                        ):  # All were disabled or errored, take the absolute first
+                        elif matching_elements:
                             final_element_handle = matching_elements[0]
                             found_specific_match_idx = 0
                             logger.warning(
                                 "All candidates were disabled or errored during check. Falling back to the very first element for input. This might fail."
                             )
 
-                    # Manage disposal list
                     temp_dispose_list = []
                     if final_element_handle:
                         for i, h in enumerate(candidate_handles_to_dispose):
@@ -1299,7 +1221,6 @@ class ActionManager(Generic[Context]):
                         [final_element_handle] if final_element_handle else []
                     )
 
-                # --- Proceed with input using final_element_handle ---
                 if not final_element_handle:
                     return StepResult(
                         error=f"Could not obtain a specific element handle for input at index {params.index} (xpath: {element_info.xpath})."
@@ -1310,7 +1231,6 @@ class ActionManager(Generic[Context]):
                         f"Element {params.index} (xpath: {element_info.xpath}) is not visible. Attempting input anyway."
                     )
 
-                # Ensure element is enabled before trying to type/fill
                 if await final_element_handle.is_disabled():
                     logger.error(
                         f"Target element {params.index} (xpath: {element_info.xpath}) is disabled. Cannot input text."
@@ -1319,15 +1239,14 @@ class ActionManager(Generic[Context]):
                         error=f"Element {params.index} is disabled, cannot input text."
                     )
 
-                # Attempt to click/focus first, then clear, then input
                 try:
-                    await final_element_handle.click(timeout=1000)  # Focus the element
+                    await final_element_handle.click(timeout=1000)
                 except Exception as click_err:
                     logger.debug(
                         f"Pre-input click/focus failed for element {params.index}: {click_err}, continuing with input attempt."
                     )
 
-                try:  # Clear existing content
+                try:
                     tag_name = (
                         await final_element_handle.evaluate("el => el.tagName")
                     ).lower()
@@ -1344,7 +1263,6 @@ class ActionManager(Generic[Context]):
                         f"Could not clear content of element {params.index}: {clear_e}"
                     )
 
-                # Try fill, then type, then keyboard
                 try:
                     logger.debug(
                         f"Attempting Playwright fill for element {params.index}"
@@ -1379,11 +1297,11 @@ class ActionManager(Generic[Context]):
                         f"Playwright type failed for element {params.index}: {pe_type}. Trying page keyboard."
                     )
 
-                try:  # Fallback to page-level keyboard typing (less targeted)
+                try:
                     logger.debug(
                         f"Attempting page keyboard type for element {params.index}"
                     )
-                    # Ensure element is focused before global keyboard typing
+
                     await final_element_handle.focus(timeout=1000)
                     await page.keyboard.type(params.text, delay=50)
                     logger.info(
@@ -1425,7 +1343,7 @@ class ActionManager(Generic[Context]):
                 unique_handles_to_dispose = []
                 seen_handles = set()
                 for h in all_handles_to_check_dispose:
-                    if h and h not in seen_handles:  # ensure h is not None
+                    if h and h not in seen_handles:
                         unique_handles_to_dispose.append(h)
                         seen_handles.add(h)
 
@@ -1671,12 +1589,12 @@ class ActionManager(Generic[Context]):
 
         try:
             validated_params = (
-                registered_action.param_model(**params_obj)  # type: ignore
+                registered_action.param_model(**params_obj)
                 if isinstance(params_obj, dict)
                 else (
-                    params_obj  # type: ignore
+                    params_obj
                     if isinstance(params_obj, BaseModel)
-                    else registered_action.param_model()  # type: ignore
+                    else registered_action.param_model()
                 )
             )
 
@@ -1843,8 +1761,8 @@ class MessageManager:
                     content_str += " [IMAGE] "
                     image_count += 1
 
-        if hasattr(message, "tool_calls") and message.tool_calls:  # type: ignore
-            content_str += str(message.tool_calls)  # type: ignore
+        if hasattr(message, "tool_calls") and message.tool_calls:
+            content_str += str(message.tool_calls)
 
         return (len(content_str) // self.settings.estimated_characters_per_token) + (
             image_count * self.settings.image_tokens
@@ -1885,7 +1803,7 @@ class MessageManager:
                         new_content_list.append({"type": "text", "text": temp_text})
                     else:
                         new_content_list.append(item)
-                message_to_add.content = new_content_list  # type: ignore
+                message_to_add.content = new_content_list
         else:
             message_to_add = message
 
@@ -2027,7 +1945,7 @@ class MessageManager:
                     },
                 },
             ]
-            self._add_message_with_tokens(HumanMessage(content=content_list))  # type: ignore
+            self._add_message_with_tokens(HumanMessage(content=content_list))
         else:
             self._add_message_with_tokens(HumanMessage(content=full_state_description))
 
@@ -2041,7 +1959,7 @@ class MessageManager:
         ]
         content = "Okay, proceeding with the determined action(s)."
 
-        ai_message = AIMessage(content=content, tool_calls=tool_calls)  # type: ignore
+        ai_message = AIMessage(content=content, tool_calls=tool_calls)
         self._add_message_with_tokens(ai_message)
 
     def add_tool_message(
@@ -2078,7 +1996,7 @@ class MessageManager:
                             )
                             and self.state.history.messages[i + 1].message.tool_call_id
                             == current_msg_container.message.tool_calls[0].get("id")
-                        ):  # type: ignore
+                        ):
                             logger.debug(
                                 f"Skipping removal of AIMessage at index {i} as its ToolMessage is missing or not next."
                             )
@@ -2146,12 +2064,9 @@ class SystemPrompt:
         override_system_message: Optional[str] = None,
         extend_system_message: Optional[str] = None,
     ):
-        prompt_content = (
-            override_system_message
-            or PROMPT_TEMPLATE.format(
-                action_description=action_description,
-                max_actions_per_step=max_actions_per_step,
-            )
+        prompt_content = override_system_message or PROMPT_TEMPLATE.format(
+            action_description=action_description,
+            max_actions_per_step=max_actions_per_step,
         )
         if extend_system_message:
             prompt_content += f"\n{extend_system_message}"
@@ -2287,7 +2202,7 @@ class NextAction(BaseModel):
             __base__=NextAction,
             action=(List[custom_actions_model], Field(..., min_length=1)),
             __module__=NextAction.__module__,
-        )  # type: ignore
+        )
 
 
 class AutomationConfig(BaseModel):
@@ -2396,9 +2311,7 @@ class WebAutomator(Generic[Context]):
         self.context = context
 
         self.ActionModelType = self.controller.registry.create_action_model()
-        self.AgentOutputType = NextAction.type_with_custom_actions(
-            self.ActionModelType
-        )
+        self.AgentOutputType = NextAction.type_with_custom_actions(self.ActionModelType)
 
         self.initial_actions = (
             self._convert_initial_actions(initial_actions) if initial_actions else None
@@ -2519,21 +2432,21 @@ class WebAutomator(Generic[Context]):
             elif self.tool_calling_method == "json_mode":
                 llm_to_invoke = self.llm.with_structured_output(
                     self.AgentOutputType, method="json_mode", include_raw=True
-                )  # type: ignore
+                )
 
         except Exception as e:
             logger.error(
                 f"Failed to configure LLM for tool/structured output with method '{self.tool_calling_method}': {e}"
             )
 
-        raw_response_message: BaseMessage = await llm_to_invoke.ainvoke(input_messages)  # type: ignore
+        raw_response_message: BaseMessage = await llm_to_invoke.ainvoke(input_messages)
         model_output_obj: NextAction
 
         if (
             hasattr(raw_response_message, "tool_calls")
             and raw_response_message.tool_calls
-        ):  # type: ignore
-            tool_call = raw_response_message.tool_calls[0]  # type: ignore
+        ):
+            tool_call = raw_response_message.tool_calls[0]
             tool_call_id_from_llm = tool_call.get("id")
             called_tool_name = tool_call.get("name")
             raw_args = tool_call.get("args")
@@ -2631,7 +2544,7 @@ class WebAutomator(Generic[Context]):
                     try:
                         current_action_model = self.ActionModelType(
                             **current_action_model
-                        )  # type: ignore
+                        )
                     except ValidationError as e:
                         error_msg = f"Invalid action structure for action {i + 1} in sequence: {e}. Action data: {current_action_model}"
                         logger.error(error_msg)
@@ -2781,9 +2694,7 @@ class WebAutomator(Generic[Context]):
             else:
                 logger.warning("LLM decided no actions or action list was empty.")
                 action_execution_results = [
-                    StepResult(
-                        error="LLM provided no actions.", include_in_memory=True
-                    )
+                    StepResult(error="LLM provided no actions.", include_in_memory=True)
                 ]
 
             self.state.last_result = action_execution_results
@@ -2968,13 +2879,13 @@ class WebAutomator(Generic[Context]):
 
         done_params = DoneAction(text=reason, success=False)
         try:
-            final_action = self.ActionModelType(**{"done": done_params})  # type: ignore
+            final_action = self.ActionModelType(**{"done": done_params})
         except ValidationError as ve:
             logger.error(
                 f"Could not create 'done' ActionModel: {ve}. This might indicate a mismatch in ActionModelType structure."
             )
             if hasattr(self.ActionModelType, "done"):
-                final_action = self.ActionModelType(done=done_params)  # type: ignore
+                final_action = self.ActionModelType(done=done_params)
             else:
                 logger.error(
                     "Cannot determine how to structure 'done' action for ActionModelType. Skipping forced done history item."
@@ -2989,7 +2900,7 @@ class WebAutomator(Generic[Context]):
 
         final_model_output = self.AgentOutputType(
             current_state=final_brain_state,
-            action=[final_action],  # type: ignore
+            action=[final_action],
         )
 
         final_action_result = StepResult(
@@ -3116,9 +3027,9 @@ async def main():
         logger.error("OPENAI_API_KEY not found.")
         return
 
-    from langchain_openai import ChatOpenAI  # type: ignore
+    from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.0)  # type: ignore
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
 
     task = "Go to google.com, search for 'current weather in Ho Chi Minh City', and then extract the temperature and general conditions."
 
@@ -3151,7 +3062,7 @@ async def main():
             "viewport": {
                 "width": 1920,
                 "height": 1080,
-            },  # ADDED: Example large viewport
+            },
         }
     )
 

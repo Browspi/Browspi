@@ -11,11 +11,11 @@ from pydantic import BaseModel
 from PyPDF2 import PdfReader
 
 from browspi.main import (
+    ActionManager,
+    AutomationConfig,
     StepResult,
     WebAutomator,
-    AutomationConfig,
     WebNavigator,
-    ActionManager,
     load_dotenv,
     logging,
 )
@@ -240,7 +240,9 @@ async def main():
         if final_content:
             print(f"\n✅ Final Result: {final_content}")
         else:
-            print("\n WebAutomator did not complete successfully or produce a final result.")
+            print(
+                "\n WebAutomator did not complete successfully or produce a final result."
+            )
     except Exception as e:
         print(f"Error during agent execution: {e}")
         logger.error("Main execution error", exc_info=True)

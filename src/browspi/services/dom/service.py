@@ -32,7 +32,9 @@ class DomService:
         self.xpath_cache = {}
 
         self.js_code = (
-            resources.files("browspi.services").joinpath("generatePageMap.js").read_text()
+            resources.files("browspi.services")
+            .joinpath("generatePageMap.js")
+            .read_text()
         )
 
     # region - Clickable elements

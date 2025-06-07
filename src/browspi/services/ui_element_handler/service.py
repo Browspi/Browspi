@@ -7,12 +7,9 @@ class UiElementHandler:
     @staticmethod
     def get_clickable_elements_hashes(dom_element: DOMElementNode) -> set[str]:
         """Get all clickable elements in the DOM tree"""
-        clickable_elements = UiElementHandler.get_clickable_elements(
-            dom_element
-        )
+        clickable_elements = UiElementHandler.get_clickable_elements(dom_element)
         return {
-            UiElementHandler.hash_dom_element(element)
-            for element in clickable_elements
+            UiElementHandler.hash_dom_element(element) for element in clickable_elements
         }
 
     @staticmethod
@@ -32,15 +29,9 @@ class UiElementHandler:
 
     @staticmethod
     def hash_dom_element(dom_element: DOMElementNode) -> str:
-        parent_branch_path = UiElementHandler._get_parent_branch_path(
-            dom_element
-        )
-        branch_path_hash = UiElementHandler._parent_branch_path_hash(
-            parent_branch_path
-        )
-        attributes_hash = UiElementHandler._attributes_hash(
-            dom_element.attributes
-        )
+        parent_branch_path = UiElementHandler._get_parent_branch_path(dom_element)
+        branch_path_hash = UiElementHandler._parent_branch_path_hash(parent_branch_path)
+        attributes_hash = UiElementHandler._attributes_hash(dom_element.attributes)
         xpath_hash = UiElementHandler._xpath_hash(dom_element.xpath)
         # text_hash = DomTreeProcessor._text_hash(dom_element)
 

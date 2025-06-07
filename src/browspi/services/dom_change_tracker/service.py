@@ -85,9 +85,7 @@ class DomChangeTracker:
     @staticmethod
     def _hash_dom_element(dom_element: DOMElementNode) -> HashedDomElement:
         parent_branch_path = DomChangeTracker._get_parent_branch_path(dom_element)
-        branch_path_hash = DomChangeTracker._parent_branch_path_hash(
-            parent_branch_path
-        )
+        branch_path_hash = DomChangeTracker._parent_branch_path_hash(parent_branch_path)
         attributes_hash = DomChangeTracker._attributes_hash(dom_element.attributes)
         xpath_hash = DomChangeTracker._xpath_hash(dom_element.xpath)
         # text_hash = DomTreeProcessor._text_hash(dom_element)

@@ -40,12 +40,12 @@ from typing_extensions import (  # Changed from typing to typing_extensions
     Union,
 )
 
-from browspi.services.ui_element_handler.service import (
-    UiElementHandler,
-)
 from browspi.services.dom.service import (
     DomService,
 )  # Assuming this will exist or be moved
+from browspi.services.ui_element_handler.service import (
+    UiElementHandler,
+)
 from browspi.services.views import (
     DOMElementNode,
     SelectorMap,
@@ -376,6 +376,7 @@ def _log_pretty_url(s: str, max_len: int | None = 22) -> str:
     if max_len is not None and len(s) > max_len:
         return s[:max_len] + "…"
     return s
+
 
 class WebNavigator(BaseModel):
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True, frozen=False)
@@ -733,9 +734,7 @@ class WebNavigator(BaseModel):
                 and self._cached_clickable_element_hashes.url == updated_state.url
             ):
                 updated_state_clickable_elements = (
-                    UiElementHandler.get_clickable_elements(
-                        updated_state.element_tree
-                    )
+                    UiElementHandler.get_clickable_elements(updated_state.element_tree)
                 )
                 for dom_element in updated_state_clickable_elements:
                     dom_element.is_new = (

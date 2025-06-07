@@ -7,9 +7,9 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from browspi.main import (
-    WebAutomator,
-    AutomationConfig,
     ActionManager,
+    AutomationConfig,
+    WebAutomator,
     load_dotenv,
     logging,
 )
@@ -127,7 +127,9 @@ async def main():
         if final_content:
             print(f"\n✅ Final Result: {final_content}")
         else:
-            print("\n WebAutomator did not complete successfully or produce a final result.")
+            print(
+                "\n WebAutomator did not complete successfully or produce a final result."
+            )
     except Exception as e:
         print(f"Error during agent execution: {e}")
         logger.error("Main execution error", exc_info=True)
