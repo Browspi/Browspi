@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Optional
 
-from browspi.services.history_tree_processor.view import (
+from browspi.services.dom_change_tracker.view import (
     CoordinateSet,
     HashedDomElement,
     ViewportInfo,
@@ -127,11 +127,11 @@ class DOMElementNode(DOMBaseNode):
 
     @cached_property
     def hash(self) -> HashedDomElement:
-        from browspi.services.history_tree_processor.service import (
-            HistoryTreeProcessor,
+        from browspi.services.dom_change_tracker.service import (
+            DomChangeTracker,
         )
 
-        return HistoryTreeProcessor._hash_dom_element(self)
+        return DomChangeTracker._hash_dom_element(self)
 
     def get_all_text_till_next_clickable_element(self, max_depth: int = -1) -> str:
         text_parts = []

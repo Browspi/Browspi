@@ -40,8 +40,8 @@ from typing_extensions import (  # Changed from typing to typing_extensions
     Union,
 )
 
-from browspi.services.clickable_element_processor.service import (
-    ClickableElementProcessor,
+from browspi.services.ui_element_handler.service import (
+    UiElementHandler,
 )
 from browspi.services.dom.service import (
     DomService,
@@ -377,8 +377,6 @@ def _log_pretty_url(s: str, max_len: int | None = 22) -> str:
         return s[:max_len] + "…"
     return s
 
-
-# --- Browser Session ---
 class WebNavigator(BaseModel):
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True, frozen=False)
     browser_profile: BrowserConfig = Field(default_factory=BrowserConfig)
@@ -735,18 +733,18 @@ class WebNavigator(BaseModel):
                 and self._cached_clickable_element_hashes.url == updated_state.url
             ):
                 updated_state_clickable_elements = (
-                    ClickableElementProcessor.get_clickable_elements(
+                    UiElementHandler.get_clickable_elements(
                         updated_state.element_tree
                     )
                 )
                 for dom_element in updated_state_clickable_elements:
                     dom_element.is_new = (
-                        ClickableElementProcessor.hash_dom_element(dom_element)
+                        UiElementHandler.hash_dom_element(dom_element)
                         not in self._cached_clickable_element_hashes.hashes
                     )
             self._cached_clickable_element_hashes = CachedClickableElementHashes(
                 url=updated_state.url,
-                hashes=ClickableElementProcessor.get_clickable_elements_hashes(
+                hashes=UiElementHandler.get_clickable_elements_hashes(
                     updated_state.element_tree
                 ),
             )

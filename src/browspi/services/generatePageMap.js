@@ -32,7 +32,7 @@
   const PERF_METRICS = debugMode ? {
     buildDomTreeCalls: 0,
     timings: {
-      buildDomTree: 0,
+      generatePageMap: 0,
       highlightElement: 0,
       isInteractiveElement: 0,
       isElementVisible: 0,
@@ -1202,7 +1202,7 @@
   /**
    * Creates a node data object for a given node and its descendants.
    */
-  function buildDomTree(node, parentIframe = null, isParentHighlighted = false) {
+  function generatePageMap(node, parentIframe = null, isParentHighlighted = false) {
     // Fast rejection checks first
     if (!node || node.id === HIGHLIGHT_CONTAINER_ID || 
         (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.TEXT_NODE)) {
@@ -1228,7 +1228,7 @@
 
       // Process children of body
       for (const child of node.childNodes) {
-        const domElement = buildDomTree(child, parentIframe, false); // Body's children have no highlighted parent initially
+        const domElement = generatePageMap(child, parentIframe, false); // Body's children have no highlighted parent initially
         if (domElement) nodeData.children.push(domElement);
       }
 
@@ -1340,7 +1340,7 @@
           const iframeDoc = node.contentDocument || node.contentWindow?.document;
           if (iframeDoc) {
             for (const child of iframeDoc.childNodes) {
-              const domElement = buildDomTree(child, node, false);
+              const domElement = generatePageMap(child, node, false);
               if (domElement) nodeData.children.push(domElement);
             }
           }
@@ -1358,7 +1358,7 @@
       ) {
         // Process all child nodes to capture formatted text
         for (const child of node.childNodes) {
-          const domElement = buildDomTree(child, parentIframe, nodeWasHighlighted);
+          const domElement = generatePageMap(child, parentIframe, nodeWasHighlighted);
           if (domElement) nodeData.children.push(domElement);
         }
       }
@@ -1367,7 +1367,7 @@
         if (node.shadowRoot) {
           nodeData.shadowRoot = true;
           for (const child of node.shadowRoot.childNodes) {
-            const domElement = buildDomTree(child, parentIframe, nodeWasHighlighted);
+            const domElement = generatePageMap(child, parentIframe, nodeWasHighlighted);
             if (domElement) nodeData.children.push(domElement);
           }
         }
@@ -1375,7 +1375,7 @@
         for (const child of node.childNodes) {
           // Pass the highlighted status of the *current* node to its children
           const passHighlightStatusToChild = nodeWasHighlighted || isParentHighlighted;
-          const domElement = buildDomTree(child, parentIframe, passHighlightStatusToChild);
+          const domElement = generatePageMap(child, parentIframe, passHighlightStatusToChild);
           if (domElement) nodeData.children.push(domElement);
         }
       }
@@ -1394,7 +1394,7 @@
   }
 
   // After all functions are defined, wrap them with performance measurement
-  // Remove buildDomTree from here as we measure it separately
+  // Remove generatePageMap from here as we measure it separately
   highlightElement = measureTime(highlightElement);
   isInteractiveElement = measureTime(isInteractiveElement);
   isElementVisible = measureTime(isElementVisible);
@@ -1403,7 +1403,7 @@
   isTextNodeVisible = measureTime(isTextNodeVisible);
   getEffectiveScroll = measureTime(getEffectiveScroll);
 
-  const rootId = buildDomTree(document.body);
+  const rootId = generatePageMap(document.body);
 
   // Clear the cache before starting
   DOM_CACHE.clearCache();
