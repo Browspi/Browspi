@@ -2104,7 +2104,7 @@ class MessageManager:
         pass
 
 
-BROWSER_USE_SYSTEM_PROMPT_TEMPLATE = """
+PROMPT_TEMPLATE = """
 You are a proficient AI agent designed to interact with web pages based on user tasks.
 Your goal is to understand the current state of a web page and decide the best next action(s) to achieve the user's objective.
 
@@ -2148,7 +2148,7 @@ class SystemPrompt:
     ):
         prompt_content = (
             override_system_message
-            or BROWSER_USE_SYSTEM_PROMPT_TEMPLATE.format(
+            or PROMPT_TEMPLATE.format(
                 action_description=action_description,
                 max_actions_per_step=max_actions_per_step,
             )
