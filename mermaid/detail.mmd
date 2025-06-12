@@ -1,0 +1,234 @@
+---
+config:
+  theme: neutral
+---
+classDiagram
+direction LR
+    class WebAutomator {
+	    +task: str
+	    +llm: BaseChatModel
+	    +browser_session: WebNavigator
+	    +controller: ActionManager
+	    +settings: AutomationConfig
+	    +state: AutomatorStatus
+	    +run(max_steps: int) AgentHistoryList
+	    +step()
+	    +get_next_action() NextAction
+	    +multi_act(actions: List~ActionModel~) List~ActionResult~
+	    +close()
+    }
+    class AutomationConfig {
+	    +use_vision: bool
+	    +save_conversation_path: Optional~str~
+	    +max_actions_per_step: int
+	    +page_extraction_llm: Optional~BaseChatModel~
+    }
+    class AutomatorStatus {
+	    +n_steps: int
+	    +last_result: Optional~List~ActionResult~~
+	    +history: AgentHistoryList
+    }
+    class AgentHistoryList {
+	    +history: List~ExecutionLog~
+	    +is_done() bool
+	    +final_result() Optional~str~
+    }
+    class ExecutionLog {
+	    +model_output: Optional~NextAction~
+	    +result: List~ActionResult~
+	    +state: Dict
+    }
+    class NextAction {
+	    +current_state: AgentBrain
+	    +action: List~ActionModel~
+    }
+    class AgentBrain {
+	    +evaluation_previous_goal: str
+	    +memory: str
+	    +next_goal: str
+    }
+    class ActionManager {
+	    +registry: ActionRegistry
+	    +act(action: ActionModel, browser_session: WebNavigator) ActionResult
+	    +action(description: str, param_model: Type~BaseModel~) Callable
+    }
+    class ActionRegistry {
+	    +actions: Dict~str, RegisteredAction~
+	    +get_prompt_description() str
+	    +create_action_model() Type~ActionModel~
+    }
+    class RegisteredAction {
+	    +name: str
+	    +description: str
+	    +function: Callable
+	    +param_model: Type~BaseModel~
+    }
+    class ActionModel {
+	    +get_index() Optional~int~
+    }
+    class GoToUrlAction {
+    }
+    class ClickElementAction {
+    }
+    class InputTextAction {
+    }
+    class ScrollAction {
+    }
+    class DoneAction {
+    }
+    class OpenTabAction {
+    }
+    class CloseTabAction {
+    }
+    class SwitchTabAction {
+    }
+    class ExtractPageContentAction {
+    }
+    class SendKeysAction {
+    }
+    class WaitAction {
+    }
+    class linkedin_job_apply.Job {
+    }
+    class linkedin_job_apply.UploadCvParams {
+    }
+    class ActionResult {
+	    +is_done: bool
+	    +success: Optional~bool~
+	    +extracted_content: Optional~str~
+	    +error: Optional~str~
+    }
+    class WebNavigator {
+	    +browser_profile: BrowserConfig
+	    +playwright_context: Optional~PlaywrightBrowserContext~
+	    +agent_current_page: Optional~Page~
+	    +start() WebNavigator
+	    +stop()
+	    +navigate(url: str)
+	    +get_state_summary() BrowserStateSummary
+	    +get_current_page() Page
+	    +find_file_upload_element_by_index(index: int) DOMElementNode
+	    +get_locate_element(element: DOMElementNode) ElementHandle
+    }
+    class BrowserConfig {
+	    +user_data_dir: Optional~str~
+	    +executable_path: Optional~str~
+	    +headless: bool
+	    +args: List~str~
+	    +include_attributes: List~str~
+    }
+    class BrowserStateSummary {
+	    +url: str
+	    +title: str
+	    +tabs: List~TabInfo~
+	    +element_tree: DOMElementNode
+	    +selector_map: SelectorMap
+	    +screenshot: Optional~str~
+    }
+    class DOMElementNode {
+	    +tag_name: str
+	    +xpath: str
+	    +attributes: Dict
+	    +children: List~DOMBaseNode~
+	    +highlight_index: Optional~int~
+    }
+    class DOMState {
+	    +element_tree: DOMElementNode
+	    +selector_map: SelectorMap
+    }
+    class DomService {
+	    +page: Page
+	    +get_clickable_elements() DOMState
+	    +_build_dom_tree() tuple~DOMElementNode, SelectorMap~
+    }
+    class ClickableElementProcessor {
+	    +get_clickable_elements_hashes(dom_element: DOMElementNode) set~str~
+	    +hash_dom_element(dom_element: DOMElementNode) str
+    }
+    class HistoryTreeProcessor {
+	    +convert_dom_element_to_history_element(dom_element: DOMElementNode) DOMHistoryElement
+	    +find_history_element_in_tree(dom_history_element: DOMHistoryElement, tree: DOMElementNode) Optional~DOMElementNode~
+    }
+    class linkedin_job_apply.pyasLinkedinJobApply {
+	    +CV: Path
+	    +save_jobs(job: Job) ActionResult
+	    +read_jobs() ActionResult
+	    +read_cv() ActionResult
+	    +upload_cv(index: int, browser_session: WebNavigator) ActionResult
+	    +main()
+    }
+    class format_all.pyasFormatAll {
+	    +main()
+    }
+    class BaseChatModel {
+    }
+    class Page {
+    }
+    class PlaywrightBrowserContext {
+    }
+    class ElementHandle {
+    }
+    class SelectorMap {
+    }
+    class generatePageMap.js {
+    }
+    class DOMHistoryElement {
+    }
+    class LinkedinJobApply {
+    }
+    class LiamHo_CV.pdf {
+    }
+    class FormatAll {
+    }
+    class subprocess {
+    }
+
+	<<Abstract>> ActionModel
+
+    ActionModel <|-- GoToUrlAction
+    ActionModel <|-- ClickElementAction
+    ActionModel <|-- InputTextAction
+    ActionModel <|-- ScrollAction
+    ActionModel <|-- DoneAction
+    ActionModel <|-- OpenTabAction
+    ActionModel <|-- CloseTabAction
+    ActionModel <|-- SwitchTabAction
+    ActionModel <|-- ExtractPageContentAction
+    ActionModel <|-- SendKeysAction
+    ActionModel <|-- WaitAction
+    ActionModel <|-- linkedin_job_apply.Job
+    ActionModel <|-- linkedin_job_apply.UploadCvParams
+    WebAutomator *-- AutomationConfig
+    WebAutomator *-- AutomatorStatus
+    WebAutomator *-- ActionManager
+    WebAutomator *-- WebNavigator
+    WebAutomator ..> BaseChatModel : uses
+    AutomatorStatus *-- AgentHistoryList
+    AgentHistoryList "1" *-- "0..*" ExecutionLog : contains
+    ExecutionLog *-- NextAction
+    NextAction *-- AgentBrain
+    NextAction "1" *-- "1..*" ActionModel : contains actions
+    ActionManager *-- ActionRegistry
+    ActionRegistry "1" *-- "0..*" RegisteredAction : registers
+    WebNavigator *-- BrowserConfig
+    WebNavigator ..> Page : uses current
+    WebNavigator ..> PlaywrightBrowserContext : uses
+    WebNavigator ..> ElementHandle : uses
+    WebNavigator ..> BrowserStateSummary : creates
+    WebNavigator ..> DOMElementNode : uses
+    BrowserStateSummary *-- DOMElementNode
+    BrowserStateSummary *-- SelectorMap
+    DomService ..> Page : uses
+    DomService ..> DOMState : creates
+    DOMState *-- DOMElementNode
+    DOMState *-- SelectorMap
+    DomService ..> generatePageMap.js : executes
+    ClickableElementProcessor ..> DOMElementNode : processes
+    HistoryTreeProcessor ..> DOMElementNode : processes
+    HistoryTreeProcessor ..> DOMHistoryElement : creates
+    LinkedinJobApply ..> WebAutomator : uses
+    LinkedinJobApply ..> ActionManager : uses for job_controller
+    LinkedinJobApply ..> ActionResult : creates
+    LinkedinJobApply ..> WebNavigator : uses for upload_cv
+    LinkedinJobApply ..> LiamHo_CV.pdf : reads
+    FormatAll ..> subprocess : uses

@@ -1,0 +1,81 @@
+---
+config:
+  theme: neutral
+---
+classDiagram
+direction LR
+    class WebAutomator {
+	    + Coordinates reasoning, memory, and actions
+    }
+    class LLMInterface {
+	    + Provides language model communication
+    }
+    class ActionManager {
+	    + Maps and invokes supported actions
+    }
+    class ActionModel {
+	    + Represents a structured user-like operation
+    }
+    class ActionRegistry {
+	    + Registers available actions
+    }
+    class WebNavigator {
+	    + Manages browser state and page interaction
+    }
+    class BrowserConfig {
+	    + Configuration for launching browser context
+    }
+    class DomService {
+	    + Extracts and processes DOM data
+    }
+    class DOMState {
+	    + Represents the structured DOM snapshot
+    }
+    class ActionResult {
+	    + Captures outcome of an action
+    }
+    class AutomatorStatus {
+	    + Tracks progress and result history
+    }
+    class NextAction {
+	    + Model-generated next actions and goals
+    }
+    class ClickableElementProcessor {
+	    + Identifies actionable elements
+    }
+    class HistoryTreeProcessor {
+	    + Tracks DOM changes over time
+    }
+    class NavigateAction {
+    }
+    class ClickAction {
+    }
+    class InputAction {
+    }
+    class TabAction {
+    }
+    class WaitAction {
+    }
+    class ExtractAction {
+    }
+
+	<<abstract>> ActionModel
+
+    WebAutomator --> LLMInterface : uses
+    WebAutomator --> ActionManager : delegates
+    WebAutomator --> WebNavigator : operates browser
+    WebAutomator --> AutomatorStatus : maintains
+    ActionManager --> ActionRegistry : looks up
+    ActionManager --> ActionModel : executes
+    WebNavigator --> BrowserConfig : uses
+    WebNavigator --> DomService : delegates DOM handling
+    DomService --> DOMState : produces
+    ActionModel --> ActionResult : produces
+    ClickableElementProcessor --> DOMState : analyzes
+    HistoryTreeProcessor --> DOMState : analyzes
+    ActionModel <|-- NavigateAction
+    ActionModel <|-- ClickAction
+    ActionModel <|-- InputAction
+    ActionModel <|-- TabAction
+    ActionModel <|-- WaitAction
+    ActionModel <|-- ExtractAction
