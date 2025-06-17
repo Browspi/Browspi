@@ -27,9 +27,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from playwright.async_api import (
+    Browser,
     ElementHandle,
     FrameLocator,
     Page,
+    Playwright,
 )
 from playwright.async_api import (
     Error as PlaywrightError,
@@ -150,6 +152,8 @@ class WebNavigator:
     def __init__(self, browser_profile: BrowserConfig):
         self.browser_profile = browser_profile
         self.playwright_context: Optional[Any] = None
+        self.browser: Optional[Browser] = None
+        self.playwright: Optional[Playwright] = None
         self.agent_current_page: Optional[Page] = None
         self.initialized: bool = False
         self._cached_browser_state_summary: Optional[BrowserStateSummary] = None
@@ -158,7 +162,8 @@ class WebNavigator:
     async def start(self):
         from playwright.async_api import async_playwright
 
-        p = await async_playwright().start()
+        self.playwright = await async_playwright().start()
+        p = self.playwright
 
         if self.browser_profile.user_data_dir:
             logger.info(
@@ -198,12 +203,12 @@ class WebNavigator:
 
     async def _launch_non_persistent_context(self, playwright_instance):
         """Helper method to launch a non-persistent browser context."""
-        browser = await playwright_instance.chromium.launch(
+        self.browser = await playwright_instance.chromium.launch(
             headless=self.browser_profile.headless,
             executable_path=self.browser_profile.executable_path,
             args=self.browser_profile.args,
         )
-        self.playwright_context = await browser.new_context(
+        self.playwright_context = await self.browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
             viewport=self.browser_profile.viewport,
         )
@@ -231,7 +236,13 @@ class WebNavigator:
     async def stop(self):
         if self.playwright_context:
             await self.playwright_context.close()
-
+            self.playwright_context = None
+        if self.browser:
+            await self.browser.close()
+            self.browser = None
+        if self.playwright:
+            await self.playwright.stop()
+            self.playwright = None
         logger.info("Browser session stopped.")
 
     async def get_current_page(self) -> Page:
@@ -1104,7 +1115,7 @@ class ActionManager(Generic[Context]):
 
                     attr_id_val = element_info.attributes.get("id")
                     attr_name_val = element_info.attributes.get("name")
-                    attr_value_val = element_info.attributes.get("value")
+                    element_info.attributes.get("value")
                     attr_role_val = element_info.attributes.get("role")
                     attr_aria_label_val = element_info.attributes.get("aria-label")
                     attr_placeholder_val = element_info.attributes.get("placeholder")
@@ -3161,7 +3172,6 @@ async def main():
         logger.error("Main execution loop error", exc_info=True)
     finally:
         print("Closing browser session...")
-        await agent.close()
 
 
 def __main__():

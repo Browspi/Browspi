@@ -11,3 +11,10 @@ __pycache__
 # Conversation histories
 conversations/*
 !conversations/init.json
+
+/src/output/**
+
+# Allow directory traversal
+!/src/output/**/
+# Only allow files named 'init' (no extension) at any subdirectory level
+!/src/output/**/init

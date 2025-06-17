@@ -14,7 +14,8 @@ dependencies = [
     "markdownify (>=1.1.0,<2.0.0)",
     "psutil (>=7.0.0,<8.0.0)",
     "pypdf2 (>=3.0.1,<4.0.0)",
-    "langchain-core (>=0.3.64,<0.4.0)"
+    "langchain-core (>=0.3.64,<0.4.0)",
+    "gradio (>=5.34.0,<6.0.0)"
 ]
 
 [tool.poetry]
@@ -35,6 +36,7 @@ dev = "src.browspi.main:__main__"
 format = "scripts.format_all:main"
 job = "src.browspi.init_agent.linkedin_job_apply:__main__"
 news = "src.browspi.init_agent.news:__main__"
+ui = "src.browspi.ui.app:main"
 
 [tool.black]
 line-length = 100

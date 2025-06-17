@@ -1,0 +1,40 @@
+---
+config:
+  theme: neutral
+  layout: dagre
+---
+
+flowchart LR
+    Start(["Bắt đầu tác vụ"])
+
+    %% Khối khởi tạo
+    subgraph Init["Khởi tạo tác nhân"]
+        A1["Đọc cấu hình tác nhân"]
+        A2["Khởi tạo LLM và WebNavigator"]
+        A3["Đăng ký hành động vào ActionManager"]
+    end
+
+    %% Khối vòng lặp
+    subgraph Loop["Vòng lặp tác vụ"]
+        B1["Thu thập trạng thái trình duyệt"]
+        B2["Gửi trạng thái đến LLM để dự đoán hành động"]
+        B3["LLM trả về danh sách hành động"]
+        B4["Thực thi hành động qua ActionManager"]
+        B5["Lưu kết quả vào AutomatorStatus"]
+        B6{"Tác vụ đã hoàn tất?"}
+    end
+
+    End(["Kết thúc và giải phóng tài nguyên"])
+
+    %% Kết nối chính
+    Start --> A1
+    A1 --> A2
+    A2 --> A3
+    A3 --> B1
+    B1 --> B2
+    B2 --> B3
+    B3 --> B4
+    B4 --> B5
+    B5 --> B6
+    B6 -- "Chưa" --> B1
+    B6 -- "Rồi" --> End

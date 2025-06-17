@@ -1,9 +1,12 @@
 import asyncio
+import csv
 import json
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
 from browspi.main import (
@@ -27,26 +30,71 @@ class New(BaseModel):
     author: str
     link: str
     date_published: str
+    summary: str = None
+
+
+@new_controller.action(
+    "Save news into file news_data.csv",
+    param_model=New,
+)
+async def save_news_data(new: New):
+    """Save the news data to a dated CSV file in /output/news/YYYY-MM-DD.csv within the project root."""
+    try:
+        # Resolve the project root using the current file's location
+        project_root = Path(__file__).resolve().parent.parent.parent
+        output_dir = project_root / "output" / "news"
+        output_dir.mkdir(
+            parents=True, exist_ok=True
+        )  # Create the directory if it doesn't exist
+
+        # Generate the filename based on today's date
+        today_str = datetime.today().strftime("%Y-%m-%d")
+        file_path = output_dir / f"{today_str}.csv"
+
+        # Open the file in append mode and write data
+        with open(file_path, "a", encoding="utf-8", newline="") as file:
+            writer = csv.writer(file)
+            if file.tell() == 0:
+                writer.writerow(
+                    ["Title", "Author", "Link", "Date Published", "Summary"]
+                )
+            writer.writerow(
+                [new.title, new.author, new.link, new.date_published, new.summary]
+            )
+
+        return "Saved news to file"
+    except Exception as e:
+        print(f"Error saving news data: {e}")
+        logger.error("Error saving news data", exc_info=True)
 
 
 async def main():
     if not os.getenv("OPENAI_API_KEY"):
         print("Error: OPENAI_API_KEY not found.")
         return
-    from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
 
     task = """
-    You are a news aggregator agent. Your task is to find and save relevant news articles based on the user's profile.\
-    You will use the provided browser session to search for news articles, extract relevant information. And log the results in a structured format.
-    Important: Don't stuck in a news page, go to the google to search for more news articles.
+    Research the latest developments regarding {topic} from at least 5 different reputable news sources.
+
+    For each source:
+    1. Navigate to their search function and find articles about the topic from the past week
+    2. Extract the headline, publication date, and author, and save the link to the article with save_news_data function.
+    3. Summarize the key points in 2-3 sentences
+
+    After gathering information, synthesize the findings into a comprehensive summary that notes any differences in reporting or perspective between the sources.
+
+    Tips:
+    - If you encounter a captcha please wait for 10 seconds before retrying.
+    - Try to search on google first to find the latest articles.
+    - Don't treat a google preview as a full article, always click through to the original source.
     
+    Ensure that the summary is concise and highlights the most significant developments.
     """
 
-    task += """
-     Please find 5 news articles about Covid-19 in Vietnam
-    """
+    topic = "Covid-19 in Vietnam"
+    task = task.format(topic=topic)
 
     current_bp = DEFAULT_BROWSER_PROFILE.model_copy(
         update={
@@ -134,8 +182,8 @@ async def main():
         print(f"Error during agent execution: {e}")
         logger.error("Main execution error", exc_info=True)
     finally:
-        print("Closing browser session...")
         await agent.close()
+        print("Closing browser session...")
 
 
 def __main__():
