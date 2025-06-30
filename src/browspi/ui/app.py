@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import math
+import datetime  # Added this import
 
 from browspi.ui.manager import UIManager
 
@@ -28,10 +29,11 @@ def calculate_success_rates():
     """
     files = get_conversation_files()
     if not files:
-        return 0.0, {}
+        return 0.0, {}, []
 
     overall_success_count = 0
     per_conversation_step_success = {}
+    conversation_statuses = []
 
     for file in files:
         data = None
@@ -47,11 +49,15 @@ def calculate_success_rates():
         if data:
             try:
                 history = data.get("history", [])
+                convo_name = file.stem.replace('_history', '')
 
                 # Overall success
                 is_done = history and history[-1].get("result") and history[-1]["result"][-1].get("is_done")
-                if is_done and history[-1]["result"][-1].get("success"):
+                is_success = is_done and history[-1]["result"][-1].get("success")
+                if is_success:
                     overall_success_count += 1
+                
+                conversation_statuses.append({"name": convo_name, "success": is_success})
 
                 # Per-step success
                 step_successes = []
@@ -61,7 +67,6 @@ def calculate_success_rates():
                     step_successes.append(step_successful)
                 # Use a cleaner name for the conversation key and only add if there are steps
                 if step_successes:
-                    convo_name = file.stem.replace('_history', '')
                     per_conversation_step_success[convo_name] = step_successes
 
             except Exception as e:
@@ -70,14 +75,14 @@ def calculate_success_rates():
 
 
     overall_success_rate = (overall_success_count / len(files)) * 100 if files else 0.0
-    return overall_success_rate, per_conversation_step_success
+    return overall_success_rate, per_conversation_step_success, conversation_statuses
 
 
 def render_evaluation_plots():
     """
     Renders the plots for overall success rate and per-step success rate.
     """
-    overall_success_rate, per_step_success = calculate_success_rates()
+    overall_success_rate, per_step_success, conversation_statuses = calculate_success_rates()
 
     # Overall Success Rate Plot (Pie Chart)
     fig_overall, ax_overall = plt.subplots()
@@ -98,8 +103,11 @@ def render_evaluation_plots():
         # Determine grid size for subplots
         cols = 2
         rows = math.ceil(num_convos / cols)
-        fig_steps, axes = plt.subplots(rows, cols, figsize=(10, rows * 5), squeeze=False)
+        # Increased figure width to give more horizontal space
+        fig_steps, axes = plt.subplots(rows, cols, figsize=(12, rows * 5), squeeze=False)
         axes = axes.flatten()  # Flatten to make it easier to iterate
+        
+        convo_status_map = {item['name']: item['success'] for item in conversation_statuses}
 
         i = 0
         for convo_name, successes in per_step_success.items():
@@ -119,7 +127,13 @@ def render_evaluation_plots():
                 else:
                     ax.pie([1], labels=["No steps"], colors=["grey"])
                 
-                ax.set_title(f"{convo_name}\n({success_count}/{num_steps} successful steps)")
+                is_success = convo_status_map.get(convo_name, False)
+                status = "Success" if is_success else "Failure"
+                color = "green" if is_success else "red"
+                
+                # Added 'pad' to increase spacing between title and chart
+                ax.set_title(f"{convo_name}\nStatus: {status}", color=color, pad=20)
+
             else:
                 ax.text(0.5, 0.5, "No steps in conversation.", ha='center', va='center')
                 ax.set_title(convo_name)
@@ -132,7 +146,11 @@ def render_evaluation_plots():
             axes[j].set_visible(False)
 
         fig_steps.suptitle('Per-Step Success Rate in Each Conversation', fontsize=16)
-        fig_steps.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout
+        fig_steps.tight_layout(rect=[0, 0.03, 1, 0.95]) 
+        # Increased hspace and wspace for more room between charts
+        fig_steps.subplots_adjust(hspace=0.7, wspace=0.4)
+
+
     else:
         fig_steps, ax_steps = plt.subplots()
         ax_steps.text(0.5, 0.5, "No conversation data to display.", ha='center', va='center')
@@ -168,7 +186,7 @@ def create_interface():
                         )
                         session_name_input = gr.Textbox(
                             label="Session Name (Optional)",
-                            placeholder="e.g., 'linkedin-apply'. Leave blank for random.",
+                            placeholder="e.g., 'my-research'. Leave blank for random.",
                             info="A history file with this name will be saved.",
                         )
 
@@ -232,8 +250,33 @@ def create_interface():
                     max_steps_slider,
                 ]
 
+                # --- UPDATED: Wrapper function to add prefix and timestamp ---
+                def start_task_wrapper(task_type, task_input_value, session_name, llm_provider, browser_profile, use_vision, max_steps):
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                    prefix = ""
+                    if task_type == "News Research":
+                        prefix = "[news]"
+                    elif task_type == "LinkedIn Job Application":
+                        prefix = "[apply]"
+
+                    if session_name:
+                        final_session_name = f"{prefix}{session_name}_{timestamp}"
+                    else:
+                        final_session_name = f"{prefix}{timestamp}"
+                    
+                    # Call the original automation task function
+                    return ui_manager.start_automation_task(
+                        task_type,
+                        task_input_value,
+                        final_session_name,
+                        llm_provider,
+                        browser_profile,
+                        use_vision,
+                        max_steps
+                    )
+
                 start_button.click(
-                    fn=ui_manager.start_automation_task,
+                    fn=start_task_wrapper, # Changed to the wrapper
                     inputs=inputs,
                     outputs=[final_summary_output, history_log_output],
                 )
