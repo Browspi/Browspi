@@ -654,9 +654,12 @@ class ClickElementAction(BaseModel):
 
 
 class InputTextAction(BaseModel):
-    index: int
+    """
+    Action to input text into a specific element on the page.
+    """
     text: str
-
+    selector: Optional[str] = None 
+    index: Optional[int] = None   
 
 class ScrollAction(BaseModel):
     amount: Optional[int] = None
@@ -1065,304 +1068,65 @@ class ActionManager(Generic[Context]):
 
         @self.action("Input text into an element", param_model=InputTextAction)
         async def input_text(params: InputTextAction, browser_session: WebNavigator):
+            """
+            Inputs text into a specified element, handling standard inputs and contenteditable divs.
+
+            This function tries multiple methods to input text:
+            1. Tries to `fill` the element, which works for standard <input>, <textarea>.
+            2. If fill fails, it tries to `type` into the element.
+            3. If both fail, it uses JavaScript to set the element's innerHTML, which is
+            effective for contenteditable divs like in Gmail's reply box.
+            """
+            selector = getattr(params, 'selector', None)
+            index = getattr(params, 'index', None)
+            
             logger.info(
-                f"Attempting to input text '{params.text}' into element with index: {params.index}"
+                f"Attempting to input text '{params.text}' into element with selector: '{selector}' or index: {index}"
             )
-            if not browser_session._cached_browser_state_summary:
-                return StepResult(
-                    error=f"Browser state not yet summarized. Cannot find element {params.index}"
-                )
-            state = browser_session._cached_browser_state_summary
-
-            if params.index not in state.selector_map:
-                return StepResult(
-                    error=f"Element with index {params.index} not found in selector_map."
-                )
-
-            element_info = state.selector_map[params.index]
             page = await browser_session.get_current_page()
+            element_handle = None
 
-            base_locator = page.locator(f"xpath={element_info.xpath}")
-            final_element_handle: Optional[ElementHandle] = None
-            candidate_handles_to_dispose: List[ElementHandle] = []
-
+            # Locate the element using selector or index
             try:
-                matching_elements = await base_locator.element_handles()
-                candidate_handles_to_dispose.extend(matching_elements)
-
-                if not matching_elements:
-                    return StepResult(
-                        error=f"No elements found for XPath: {element_info.xpath} (index {params.index})."
-                    )
-
-                if len(matching_elements) == 1:
-                    is_sole_candidate_disabled = await matching_elements[
-                        0
-                    ].is_disabled()
-                    if is_sole_candidate_disabled:
-                        logger.warning(
-                            f"XPath {element_info.xpath} for index {params.index} resolved to a unique but DISABLED element. Input may fail."
-                        )
-                    else:
-                        logger.info(
-                            f"XPath {element_info.xpath} for index {params.index} resolved to a unique, non-disabled element."
-                        )
-                    final_element_handle = matching_elements[0]
-                else:
-                    logger.warning(
-                        f"XPath {element_info.xpath} for index {params.index} resolved to {len(matching_elements)} elements. Attempting to disambiguate for input."
-                    )
-
-                    attr_id_val = element_info.attributes.get("id")
-                    attr_name_val = element_info.attributes.get("name")
-                    element_info.attributes.get("value")
-                    attr_role_val = element_info.attributes.get("role")
-                    attr_aria_label_val = element_info.attributes.get("aria-label")
-                    attr_placeholder_val = element_info.attributes.get("placeholder")
-
-                    (element_info.attributes.get("text_content") or "").strip()
-
-                    found_specific_match_idx = -1
-
-                    for i, el_handle_candidate in enumerate(matching_elements):
-                        try:
-                            if await el_handle_candidate.is_disabled():
-                                logger.debug(
-                                    f"Candidate element #{i + 1} is disabled, skipping for input."
-                                )
-                                continue
-
-                            candidate_id = await el_handle_candidate.get_attribute("id")
-                            candidate_name = await el_handle_candidate.get_attribute(
-                                "name"
-                            )
-                            await el_handle_candidate.get_attribute("value")
-                            candidate_role = await el_handle_candidate.get_attribute(
-                                "role"
-                            )
-                            candidate_aria_label = (
-                                await el_handle_candidate.get_attribute("aria-label")
-                            )
-                            candidate_placeholder = (
-                                await el_handle_candidate.get_attribute("placeholder")
-                            )
-
-                            matches_criteria = True
-                            if attr_id_val is not None and candidate_id != attr_id_val:
-                                matches_criteria = False
-                            elif (
-                                attr_name_val is not None
-                                and candidate_name != attr_name_val
-                            ):
-                                matches_criteria = False
-                            elif (
-                                attr_role_val is not None
-                                and candidate_role != attr_role_val
-                            ):
-                                matches_criteria = False
-                            elif (
-                                attr_aria_label_val is not None
-                                and candidate_aria_label != attr_aria_label_val
-                            ):
-                                matches_criteria = False
-                            elif (
-                                attr_placeholder_val is not None
-                                and candidate_placeholder != attr_placeholder_val
-                            ):
-                                matches_criteria = False
-
-                            if matches_criteria:
-                                final_element_handle = el_handle_candidate
-                                found_specific_match_idx = i
-                                logger.info(
-                                    f"Disambiguated for input to non-disabled element #{i + 1} of {len(matching_elements)} for index {params.index} using stored attributes."
-                                )
-                                break
-                        except Exception as eval_err:
-                            logger.warning(
-                                f"Error evaluating attributes for input candidate element #{i + 1}: {eval_err}"
-                            )
-                            continue
-
-                    if not final_element_handle:
-                        logger.warning(
-                            f"Could not uniquely disambiguate a non-disabled input element for index {params.index}. Falling back to the first non-disabled element if any, else first overall."
-                        )
-
-                        first_non_disabled_handle = None
-                        first_non_disabled_idx = -1
-                        for i, el_handle_candidate in enumerate(matching_elements):
-                            if not await el_handle_candidate.is_disabled():
-                                first_non_disabled_handle = el_handle_candidate
-                                first_non_disabled_idx = i
-                                break
-
-                        if first_non_disabled_handle:
-                            final_element_handle = first_non_disabled_handle
-                            found_specific_match_idx = first_non_disabled_idx
-                            logger.info(
-                                f"Falling back to first non-disabled element (#{first_non_disabled_idx + 1}) for input."
-                            )
-                        elif matching_elements:
-                            final_element_handle = matching_elements[0]
-                            found_specific_match_idx = 0
-                            logger.warning(
-                                "All candidates were disabled or errored during check. Falling back to the very first element for input. This might fail."
-                            )
-
-                    temp_dispose_list = []
-                    if final_element_handle:
-                        for i, h in enumerate(candidate_handles_to_dispose):
-                            if (
-                                h == final_element_handle
-                                and i == found_specific_match_idx
-                            ):
-                                continue
-                            temp_dispose_list.append(h)
-                    else:
-                        temp_dispose_list.extend(candidate_handles_to_dispose)
-
-                    for h_to_dispose in temp_dispose_list:
-                        try:
-                            await h_to_dispose.dispose()
-                        except Exception:
-                            pass
-
-                    candidate_handles_to_dispose = (
-                        [final_element_handle] if final_element_handle else []
-                    )
-
-                if not final_element_handle:
-                    return StepResult(
-                        error=f"Could not obtain a specific element handle for input at index {params.index} (xpath: {element_info.xpath})."
-                    )
-
-                if not await final_element_handle.is_visible():
-                    logger.warning(
-                        f"Element {params.index} (xpath: {element_info.xpath}) is not visible. Attempting input anyway."
-                    )
-
-                if await final_element_handle.is_disabled():
-                    logger.error(
-                        f"Target element {params.index} (xpath: {element_info.xpath}) is disabled. Cannot input text."
-                    )
-                    return StepResult(
-                        error=f"Element {params.index} is disabled, cannot input text."
-                    )
-
-                try:
-                    await final_element_handle.click(timeout=1000)
-                except Exception as click_err:
-                    logger.debug(
-                        f"Pre-input click/focus failed for element {params.index}: {click_err}, continuing with input attempt."
-                    )
-
-                try:
-                    tag_name = (
-                        await final_element_handle.evaluate("el => el.tagName")
-                    ).lower()
-                    is_content_editable = await final_element_handle.evaluate(
-                        "el => el.isContentEditable"
-                    )
-                    if tag_name in ["input", "textarea"] or is_content_editable:
-                        logger.debug(f"Clearing content for element {params.index}")
-                        await final_element_handle.evaluate(
-                            'el => { if(typeof el.value !== "undefined") el.value = ""; if(el.isContentEditable) el.textContent = ""; }'
-                        )
-                except Exception as clear_e:
-                    logger.warning(
-                        f"Could not clear content of element {params.index}: {clear_e}"
-                    )
-
-                try:
-                    logger.debug(
-                        f"Attempting Playwright fill for element {params.index}"
-                    )
-                    await final_element_handle.fill(params.text, timeout=3000)
-                    logger.info(
-                        f"Successfully input text into element {params.index} using fill."
-                    )
-                    return StepResult(
-                        extracted_content=f"Inputted '{params.text}' into element {params.index}",
-                        include_in_memory=True,
-                    )
-                except PlaywrightError as pe_fill:
-                    logger.warning(
-                        f"Playwright fill failed for element {params.index}: {pe_fill}. Trying type."
-                    )
-
-                try:
-                    logger.debug(
-                        f"Attempting Playwright type for element {params.index}"
-                    )
-                    await final_element_handle.type(params.text, delay=50, timeout=5000)
-                    logger.info(
-                        f"Successfully input text into element {params.index} using type."
-                    )
-                    return StepResult(
-                        extracted_content=f"Inputted '{params.text}' into element {params.index}",
-                        include_in_memory=True,
-                    )
-                except PlaywrightError as pe_type:
-                    logger.warning(
-                        f"Playwright type failed for element {params.index}: {pe_type}. Trying page keyboard."
-                    )
-
-                try:
-                    logger.debug(
-                        f"Attempting page keyboard type for element {params.index}"
-                    )
-
-                    await final_element_handle.focus(timeout=1000)
-                    await page.keyboard.type(params.text, delay=50)
-                    logger.info(
-                        f"Successfully input text (assumed for element {params.index}) using page keyboard type."
-                    )
-                    return StepResult(
-                        extracted_content=f"Inputted '{params.text}' likely into element {params.index} via keyboard",
-                        include_in_memory=True,
-                    )
-                except Exception as keyboard_e:
-                    logger.error(
-                        f"Page keyboard type failed for element {params.index}: {keyboard_e}"
-                    )
-                    return StepResult(
-                        error=f"Failed to input text into element at index {params.index} (xpath: {element_info.xpath}) using all methods: Keyboard type error: {keyboard_e}"
-                    )
-
-            except PlaywrightTimeoutError:
-                logger.error(
-                    f"Timeout occurred in input_text for XPath: {element_info.xpath} (index {params.index})."
-                )
-                return StepResult(
-                    error=f"Timeout resolving or operating on element for XPath: {element_info.xpath} (index {params.index})."
-                )
+                if selector:
+                    element_handle = await page.locator(selector).first.element_handle()
+                elif index is not None:
+                    state = browser_session._cached_browser_state_summary
+                    if not state or index not in state.selector_map:
+                        return StepResult(error=f"Element with index {index} not found.")
+                    element_info = state.selector_map[index]
+                    element_handle = await page.locator(f"xpath={element_info.xpath}").first.element_handle()
             except Exception as e:
-                logger.error(
-                    f"General error in input_text for {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}",
-                    exc_info=True,
-                )
-                return StepResult(
-                    error=f"Failed to input text into element {params.index} (xpath: {element_info.xpath}): {type(e).__name__} - {e}"
-                )
-            finally:
-                all_handles_to_check_dispose = (
-                    [final_element_handle] if final_element_handle else []
-                )
-                all_handles_to_check_dispose.extend(candidate_handles_to_dispose)
+                logger.error(f"Could not find element: {e}")
+                return StepResult(error=f"Element not found with selector '{selector}' or index '{index}'.")
 
-                unique_handles_to_dispose = []
-                seen_handles = set()
-                for h in all_handles_to_check_dispose:
-                    if h and h not in seen_handles:
-                        unique_handles_to_dispose.append(h)
-                        seen_handles.add(h)
+            if not element_handle:
+                return StepResult(error="No element found to input text into.")
 
-                for h_to_dispose in unique_handles_to_dispose:
+            # --- Start of Input Logic ---
+            try:
+                # Method 1: Try to fill (best for standard inputs)
+                await element_handle.fill(params.text, timeout=3000)
+                logger.info("Successfully input text using 'fill'.")
+                return StepResult(extracted_content="Inputted text successfully.", include_in_memory=True)
+            except Exception as e:
+                logger.warning(f"Playwright 'fill' failed: {e}. Trying 'type'.")
+                try:
+                    # Method 2: Try to type (good for some dynamic fields)
+                    await element_handle.focus()
+                    await element_handle.type(params.text, delay=50) # Add a small delay for stability
+                    logger.info("Successfully input text using 'type'.")
+                    return StepResult(extracted_content="Inputted text successfully.", include_in_memory=True)
+                except Exception as e2:
+                    logger.warning(f"Playwright 'type' failed: {e2}. Trying JavaScript execution.")
                     try:
-                        await h_to_dispose.dispose()
-                    except Exception:
-                        pass
+                        # Method 3: Use JavaScript (robust for contenteditable divs)
+                        await element_handle.evaluate("element => element.innerHTML = arguments[0]", params.text)
+                        logger.info("Successfully input text using JavaScript execution.")
+                        return StepResult(extracted_content="Inputted text successfully.", include_in_memory=True)
+                    except Exception as e3:
+                        logger.error(f"All input methods failed: {e3}")
+                        return StepResult(error=f"Failed to input text into the element using all available methods: {e3}")
 
         @self.action("Scroll down the page", param_model=ScrollAction)
         async def scroll_down(params: ScrollAction, browser_session: WebNavigator):
