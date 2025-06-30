@@ -1,7 +1,11 @@
 # src/browspi/ui/app.py
 
 import gradio as gr
+import uvicorn
+from fastapi import FastAPI
+from gradio import mount_gradio_app
 
+from browspi.ui.evaluate_ui import create_interface as create_evaluate_interface
 from browspi.ui.manager import UIManager
 
 ui_manager = UIManager()
@@ -9,9 +13,7 @@ ui_manager = UIManager()
 
 def create_interface():
     """Tạo và trả về Gradio interface."""
-    with gr.Blocks(
-        theme=gr.themes.Default(primary_hue="blue"), title="Browspi Agent"
-    ) as interface:
+    with gr.Blocks(theme=gr.themes.Default(primary_hue="blue"), title="Browspi Agent") as interface:
         gr.Markdown("# Browspi Web Agent")
 
         with gr.Row():
@@ -20,13 +22,17 @@ def create_interface():
                 # --- THAY ĐỔI: Thêm lựa chọn loại tác vụ ---
                 task_type_radio = gr.Radio(
                     label="Task Type",
-                    choices=["General Task", "LinkedIn Job Application", "News Research"], # ADDED "News Research"
+                    choices=[
+                        "General Task",
+                        "LinkedIn Job Application",
+                        "News Research",
+                    ],  # ADDED "News Research"
                     value="General Task",
                 )
 
                 task_input = gr.Textbox(
-                    label="Your Task", # Default label
-                    placeholder="Example: Find the latest news about AI...", # Default placeholder
+                    label="Your Task",  # Default label
+                    placeholder="Example: Find the latest news about AI...",  # Default placeholder
                     visible=True,
                 )
                 session_name_input = gr.Textbox(
@@ -62,9 +68,7 @@ def create_interface():
             # --- Cột cho các Output ---
             with gr.Column(scale=3):
                 gr.Markdown("### Results")
-                final_summary_output = gr.Textbox(
-                    label="Final Summary", interactive=False, lines=4
-                )
+                final_summary_output = gr.Textbox(label="Final Summary", interactive=False, lines=4)
                 history_log_output = gr.Textbox(
                     label="Execution History", interactive=False, lines=15
                 )
@@ -74,9 +78,17 @@ def create_interface():
             if task_type == "LinkedIn Job Application":
                 return gr.update(visible=False, value="", label="Your Task")
             elif task_type == "News Research":
-                return gr.update(visible=True, label="Research Topic", placeholder="Example: Covid-19 in Vietnam") # Update label and placeholder
-            else: # General Task
-                return gr.update(visible=True, label="Your Task", placeholder="Example: Find the latest news about AI...")
+                return gr.update(
+                    visible=True,
+                    label="Research Topic",
+                    placeholder="Example: Covid-19 in Vietnam",
+                )  # Update label and placeholder
+            else:  # General Task
+                return gr.update(
+                    visible=True,
+                    label="Your Task",
+                    placeholder="Example: Find the latest news about AI...",
+                )
 
         task_type_radio.change(
             fn=toggle_task_input,
@@ -105,9 +117,15 @@ def create_interface():
 
 
 def main():
-    """Hàm chính để khởi chạy ứng dụng web."""
-    app = create_interface()
-    app.launch(server_name="localhost", server_port=7860, inbrowser=True)
+    """Launch Gradio UI with evaluation page."""
+    main_ui = create_interface()
+    eval_ui = create_evaluate_interface()
+
+    fastapi_app = FastAPI()
+    mount_gradio_app(fastapi_app, main_ui, path="/")
+    mount_gradio_app(fastapi_app, eval_ui, path="/evaluate")
+
+    uvicorn.run(fastapi_app, host="localhost", port=7860)
 
 
 if __name__ == "__main__":
