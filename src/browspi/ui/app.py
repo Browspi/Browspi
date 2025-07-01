@@ -29,7 +29,7 @@ def calculate_success_rates():
     """
     files = get_conversation_files()
     if not files:
-        return 0.0, {}, []
+        return 0.0, {}, [], 0, 0
 
     overall_success_count = 0
     per_conversation_step_success = {}
@@ -75,14 +75,14 @@ def calculate_success_rates():
 
 
     overall_success_rate = (overall_success_count / len(files)) * 100 if files else 0.0
-    return overall_success_rate, per_conversation_step_success, conversation_statuses
+    return overall_success_rate, per_conversation_step_success, conversation_statuses, len(files), overall_success_count
 
 
 def render_evaluation_plots():
     """
     Renders the plots for overall success rate and per-step success rate.
     """
-    overall_success_rate, per_step_success, conversation_statuses = calculate_success_rates()
+    overall_success_rate, per_step_success, conversation_statuses, total_conversations, overall_success_count = calculate_success_rates()
 
     # Overall Success Rate Plot (Pie Chart)
     fig_overall, ax_overall = plt.subplots()
@@ -94,7 +94,7 @@ def render_evaluation_plots():
     else:
         ax_overall.pie([1], labels=["No data"], colors=["grey"])
     ax_overall.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-    ax_overall.set_title('Overall Conversation Success Rate')
+    ax_overall.set_title(f'Overall Conversation Success Rate\n({overall_success_count} successful / {total_conversations} total)')
 
 
     # Per-Step Success Rate Pie Charts for each conversation
@@ -132,7 +132,7 @@ def render_evaluation_plots():
                 color = "green" if is_success else "red"
                 
                 # Added 'pad' to increase spacing between title and chart
-                ax.set_title(f"{convo_name}\nStatus: {status}", color=color, pad=20)
+                ax.set_title(f"{convo_name}\nStatus: {status}\n({success_count} successful, {failure_count} failed, {num_steps} total steps)", color=color, pad=20)
 
             else:
                 ax.text(0.5, 0.5, "No steps in conversation.", ha='center', va='center')
