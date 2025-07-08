@@ -49,7 +49,7 @@ async def run_news_task(
 
     # Construct the task prompt dynamically using the provided topic
     task = f"""
-    Research the latest developments regarding {topic} from at least 5 different reputable news sources.
+    Research the latest developments regarding {topic} from at least 3 different reputable news sources.
 
     For each source:
     1. Navigate to their search function and find articles about the topic from the past week
