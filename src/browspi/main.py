@@ -147,7 +147,6 @@ class BrowserConfig(BaseModel):
 
 DEFAULT_BROWSER_PROFILE = BrowserConfig()
 
-
 class WebNavigator:
     def __init__(self, browser_profile: BrowserConfig):
         self.browser_profile = browser_profile
@@ -261,22 +260,6 @@ class WebNavigator:
         page = await self.get_current_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-    async def remove_highlights(self):
-        page = await self.get_current_page()
-        try:
-            await page.evaluate(
-                """
-                () => {
-                    const container = document.getElementById('playwright-highlight-container');
-                    if (container) {
-                        container.remove();
-                    }
-                }
-                """
-            )
-        except Exception as e:
-            logger.debug(f"Could not remove highlights: {e}")
-
     async def get_state_summary(
         self, cache_clickable_elements_hashes: bool = True
     ) -> BrowserStateSummary:
@@ -284,18 +267,30 @@ class WebNavigator:
         title = await page.title()
         url = page.url
 
-        if self.browser_profile.highlight_elements:
-            await self.remove_highlights()
-
-        selector_map_mock: Dict[int, Any] = {}
+        selector_map_mock: Dict[int, DOMElementNode] = {}
         try:
-            from browspi.services.dom.service import DomService
-
-            dom_service = DomService(page)
-            dom_state = await dom_service.get_clickable_elements(
-                highlight_elements=True,
+            interactive_elements = await page.query_selector_all(
+                'button, a[href], input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [onclick]'
             )
-            selector_map_mock = dom_state.selector_map
+            idx = 0
+            for el_handle in interactive_elements:
+                if await el_handle.is_visible():
+                    tag_name = (await el_handle.evaluate("el => el.tagName")).lower()
+                    xpath = await self._get_xpath(el_handle)
+                    attributes = await el_handle.evaluate(
+                        "el => { const attrs = {}; for (let i = 0; i < el.attributes.length; i++) { attrs[el.attributes[i].name] = el.attributes[i].value; } return attrs; }"
+                    )
+                    text_content = await el_handle.text_content()
+                    if text_content:
+                        attributes["text_content"] = text_content.strip()
+
+                    selector_map_mock[idx] = DOMElementNode(
+                        xpath=xpath,
+                        tag_name=tag_name,
+                        attributes=attributes,
+                        highlight_index=idx,
+                    )
+                    idx += 1
         except Exception as e:
             logger.error(f"Error extracting elements for mock selector_map: {e}")
 
@@ -306,18 +301,16 @@ class WebNavigator:
         except Exception as e:
             logger.warning(f"Could not take screenshot: {e}")
 
-        selector_map_for_pydantic = {k: v.__dict__ for k, v in selector_map_mock.items()}
-
         summary = BrowserStateSummary(
             url=url,
             title=title,
-            selector_map=selector_map_for_pydantic,
+            selector_map=selector_map_mock,
             screenshot=screenshot_b64,
         )
         self._cached_browser_state_summary = summary
 
         if cache_clickable_elements_hashes:
-            current_hashes = {info.get('xpath') for info in selector_map_for_pydantic.values()}
+            current_hashes = {info.xpath for info in selector_map_mock.values()}
             if self._cached_clickable_element_hashes:
                 pass
             self._cached_clickable_element_hashes = {
@@ -511,8 +504,7 @@ class WebNavigator:
         except Exception as e:
             logger.error(f"❌  Failed to locate element: {str(e)}")
             return None
-
-
+        
 def addLoggingLevel(levelName, levelNum, methodName=None):
     if not methodName:
         methodName = levelName.lower()
