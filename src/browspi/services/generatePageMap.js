@@ -265,20 +265,7 @@
       if (!rects || rects.length === 0) return index; // Exit if no rects
 
       // Generate a color based on the index
-      const colors = [
-        "#FF0000",
-        "#00FF00",
-        "#0000FF",
-        "#FFA500",
-        "#800080",
-        "#008080",
-        "#FF69B4",
-        "#4B0082",
-        "#FF4500",
-        "#2E8B57",
-        "#DC143C",
-        "#4682B4",
-      ];
+      const colors = ["#000000"];
       const colorIndex = index % colors.length;
       const baseColor = colors[colorIndex];
       const backgroundColor = baseColor + "1A"; // 10% opacity version of the color
@@ -300,8 +287,8 @@
 
         const overlay = document.createElement("div");
         overlay.style.position = "fixed";
-        overlay.style.border = `2px solid ${baseColor}`;
-        overlay.style.backgroundColor = backgroundColor;
+        overlay.style.border = 'none';
+        overlay.style.backgroundColor = 'transparent';
         overlay.style.pointerEvents = "none";
         overlay.style.boxSizing = "border-box";
 
@@ -322,7 +309,7 @@
       label = document.createElement("div");
       label.className = "playwright-highlight-label";
       label.style.position = "fixed";
-      label.style.background = baseColor;
+      label.style.background = 'black';
       label.style.color = "white";
       label.style.padding = "1px 4px";
       label.style.borderRadius = "4px";
@@ -638,10 +625,8 @@
 
   /**
    * Checks if an element is interactive.
-   * 
-   * lots of comments, and uncommented code - to show the logic of what we already tried
-   * 
-   * One of the things we tried at the beginning was also to use event listeners, and other fancy class, style stuff -> what actually worked best was just combining most things with computed cursor style :)
+   * * lots of comments, and uncommented code - to show the logic of what we already tried
+   * * One of the things we tried at the beginning was also to use event listeners, and other fancy class, style stuff -> what actually worked best was just combining most things with computed cursor style :)
    */
   function isInteractiveElement(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) {

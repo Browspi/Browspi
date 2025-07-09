@@ -81,6 +81,7 @@ def calculate_success_rates():
 def render_evaluation_plots():
     """
     Renders the plots for overall success rate and per-step success rate.
+    Handles a large number of conversations by adjusting the plot layout to always show 2 plots per line.
     """
     overall_success_rate, per_step_success, conversation_statuses, total_conversations, overall_success_count = calculate_success_rates()
 
@@ -93,50 +94,57 @@ def render_evaluation_plots():
         ax_overall.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
     else:
         ax_overall.pie([1], labels=["No data"], colors=["grey"])
-    ax_overall.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+    ax_overall.axis('equal')
     ax_overall.set_title(f'Overall Conversation Success Rate\n({overall_success_count} successful / {total_conversations} total)')
 
 
     # Per-Step Success Rate Pie Charts for each conversation
     if per_step_success:
         num_convos = len(per_step_success)
-        # Determine grid size for subplots
+        # --- MODIFICATION START ---
+        # Set grid size to 2 columns to render 2 plots per line.
         cols = 2
         rows = math.ceil(num_convos / cols)
-        # Increased figure width to give more horizontal space
-        fig_steps, axes = plt.subplots(rows, cols, figsize=(12, rows * 5), squeeze=False)
-        axes = axes.flatten()  # Flatten to make it easier to iterate
-        
+        row_height = 5 # Standard height for each row of plots
+
+        # Adjust figsize to prevent it from becoming excessively tall
+        # Cap the total figure height to a reasonable value (e.g., 80 inches for 2 columns)
+        total_height = min(rows * row_height, 80)
+        fig_steps, axes = plt.subplots(rows, cols, figsize=(12, total_height), squeeze=False)
+        # --- MODIFICATION END ---
+        axes = axes.flatten()
+
         convo_status_map = {item['name']: item['success'] for item in conversation_statuses}
 
         i = 0
         for convo_name, successes in per_step_success.items():
+            if i >= len(axes): # Prevent index out of bounds
+                break
             ax = axes[i]
             num_steps = len(successes)
-            
+
             if num_steps > 0:
                 success_count = sum(successes)
                 failure_count = num_steps - success_count
-                
+
                 step_labels = 'Successful Steps', 'Failed Steps'
                 step_sizes = [success_count, failure_count]
-                step_colors = ['#90ee90', '#ffcccb']  # Light green, light red
+                step_colors = ['#90ee90', '#ffcccb']
 
                 if sum(step_sizes) > 0:
                     ax.pie(step_sizes, labels=step_labels, colors=step_colors, autopct='%1.1f%%', startangle=90)
                 else:
                     ax.pie([1], labels=["No steps"], colors=["grey"])
-                
+
                 is_success = convo_status_map.get(convo_name, False)
                 status = "Success" if is_success else "Failure"
                 color = "green" if is_success else "red"
-                
-                # Added 'pad' to increase spacing between title and chart
-                ax.set_title(f"{convo_name}\nStatus: {status}\n({success_count} successful, {failure_count} failed, {num_steps} total steps)", color=color, pad=20)
+
+                ax.set_title(f"{convo_name}\nStatus: {status}\n({success_count}s, {failure_count}f, {num_steps}t)", color=color, pad=10, fontsize=9)
 
             else:
-                ax.text(0.5, 0.5, "No steps in conversation.", ha='center', va='center')
-                ax.set_title(convo_name)
+                ax.text(0.5, 0.5, "No steps.", ha='center', va='center')
+                ax.set_title(convo_name, fontsize=9)
 
             ax.axis('equal')
             i += 1
@@ -146,9 +154,8 @@ def render_evaluation_plots():
             axes[j].set_visible(False)
 
         fig_steps.suptitle('Per-Step Success Rate in Each Conversation', fontsize=16)
-        fig_steps.tight_layout(rect=[0, 0.03, 1, 0.95]) 
-        # Increased hspace and wspace for more room between charts
-        fig_steps.subplots_adjust(hspace=0.7, wspace=0.4)
+        fig_steps.tight_layout(rect=[0, 0.03, 1, 0.95])
+        fig_steps.subplots_adjust(hspace=0.8, wspace=0.4)
 
 
     else:
