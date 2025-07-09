@@ -7,8 +7,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+# --- LLM Imports ---
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI  # Added import for Gemini
 
+# --- Browspi Core Imports ---
 from browspi.main import (
     ActionManager,
     AgentHistoryList,
@@ -16,14 +19,15 @@ from browspi.main import (
     WebAutomator,
 )
 from browspi.services.browser.service import DEFAULT_BROWSER_PROFILE
+
+# --- UI Utility Imports ---
 from browspi.ui.browser_utils import (
     get_chrome_executable_path,
     get_persistent_profile_path,
 )
 
-# Import hàm cấu hình từ file use case mới
+# --- Use Case and Agent-specific Imports ---
 from browspi.ui.use_cases.linkedin_apply import get_linkedin_task_config
-# ADDED: Import the news controller
 from browspi.init_agent.news import new_controller
 
 
@@ -31,29 +35,30 @@ class UIManager:
     def start_automation_task(
         self,
         task_type: str,
-        task_prompt: str, # This will serve as 'topic' for News Research
+        task_prompt: str,  # This will serve as 'topic' for News Research
         session_name_from_ui: str,
         llm_provider: str,
         browser_profile_name: str,
         use_vision: bool,
         max_steps: int,
     ) -> tuple[str, str]:
-        # --- THAY ĐỔI: Logic được đơn giản hóa rất nhiều ---
+
+        # --- Task and Controller Setup ---
         if task_type == "LinkedIn Job Application":
             final_task, controller, error = get_linkedin_task_config()
             if error:
                 return error, ""
 
-            # Bắt buộc sử dụng trình duyệt có thể thấy để xử lý đăng nhập/captcha
+            # Force a visible browser for login/captcha
             browser_profile_name = "Persistent (Visible)"
             print(
                 "INFO: LinkedIn task selected. Forcing 'Persistent (Visible)' browser profile."
             )
-        # ADDED: New elif condition for News Research
+
         elif task_type == "News Research":
-            if not task_prompt: # task_prompt here is the 'topic'
+            if not task_prompt:  # task_prompt here is the 'topic'
                 return "Topic for news research is empty.", ""
-            
+
             # Construct the task prompt for the News agent
             final_task = f"""
             Research the latest developments regarding {task_prompt} from at least 5 different reputable news sources.
@@ -72,20 +77,15 @@ class UIManager:
             
             Ensure that the summary is concise and highlights the most significant developments.
             """
-            controller = new_controller # Use the specific controller from news.py
+            controller = new_controller  # Use the specific controller from news.py
             print(f"INFO: News Research task selected for topic: {task_prompt}.")
-        else: # General Task
+        else:  # General Task
             if not task_prompt:
                 return "Task is empty.", ""
             final_task = task_prompt
-            controller = ActionManager() # Sử dụng controller mặc định
+            controller = ActionManager()  # Use the default controller
 
-        # --- Phần còn lại của file giữ nguyên ---
-
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            return "Error: OPENAI_API_KEY environment variable not found.", ""
-
+        # --- Session Naming ---
         if not session_name_from_ui:
             slug_task = re.sub(r"[^a-zA-Z0-9_-]", "", final_task.replace(" ", "-"))[:50]
             final_session_name = (
@@ -94,9 +94,26 @@ class UIManager:
         else:
             final_session_name = session_name_from_ui
 
+        # --- Async Execution Wrapper ---
         async def run_async_flow():
-            llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
+            # --- LLM and API Key Setup ---
+            llm = None
+            if llm_provider == "OpenAI":
+                if not os.getenv("OPENAI_API_KEY"):
+                    raise ValueError("OPENAI_API_KEY environment variable not set")
+                llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
+            
+            # --- COMPLETED CODE FOR GEMINI ---
+            elif llm_provider == "Gemini":
+                if not os.getenv("GOOGLE_API_KEY"):
+                    raise ValueError("GOOGLE_API_KEY environment variable not set")
+                llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=0)
+            # ------------------------------------
 
+            else:
+                raise ValueError(f"Unsupported LLM provider: {llm_provider}")
+
+            # --- Browser Profile Setup ---
             if browser_profile_name == "Persistent (Visible)":
                 persistent_profile_path = get_persistent_profile_path()
                 chrome_exe_path = get_chrome_executable_path()
@@ -116,6 +133,7 @@ class UIManager:
             else:
                 current_bp = DEFAULT_BROWSER_PROFILE
 
+            # --- Automation Config Setup ---
             conversation_dir = Path("conversations")
             conversation_dir.mkdir(parents=True, exist_ok=True)
             save_path = str(conversation_dir / f"{final_session_name}_history.json")
@@ -129,18 +147,19 @@ class UIManager:
                 max_failures=3,
             )
 
+            # --- Agent Initialization and Execution ---
             agent = WebAutomator(
                 task=final_task,
                 llm=llm,
                 agent_settings=current_as,
                 browser_profile=current_bp,
-                controller=controller,  # Sử dụng controller tương ứng
+                controller=controller,
             )
 
             history: AgentHistoryList = await agent.start_task(max_steps=max_steps)
             await agent.close()
 
-            # --- Logic format output ---
+            # --- Output Formatting Logic ---
             log_lines = []
             if history.history:
                 for i, hist_item in enumerate(history.history):
@@ -167,7 +186,7 @@ class UIManager:
                                 )
 
                     if hist_item.result:
-                        for res_idx, res_item in enumerate(hist_item.result):
+                        for res_item in hist_item.result:
                             summary = ""
                             if res_item.extracted_content:
                                 summary += (
@@ -195,6 +214,7 @@ class UIManager:
 
             return final_summary, "\n".join(log_lines)
 
+        # --- Event Loop Management and Error Handling ---
         try:
             loop = asyncio.get_event_loop()
             if loop.is_closed():

@@ -504,6 +504,372 @@ class WebNavigator:
         except Exception as e:
             logger.error(f"❌  Failed to locate element: {str(e)}")
             return None
+
+class WebNavigator2:
+    def __init__(self, browser_profile: BrowserConfig):
+        self.browser_profile = browser_profile
+        self.playwright_context: Optional[Any] = None
+        self.browser: Optional[Browser] = None
+        self.playwright: Optional[Playwright] = None
+        self.agent_current_page: Optional[Page] = None
+        self.initialized: bool = False
+        self._cached_browser_state_summary: Optional[BrowserStateSummary] = None
+        self._cached_clickable_element_hashes: Optional[Any] = None
+
+    async def start(self):
+        from playwright.async_api import async_playwright
+
+        self.playwright = await async_playwright().start()
+        p = self.playwright
+
+        if self.browser_profile.user_data_dir:
+            logger.info(
+                f"Attempting to launch persistent context with user_data_dir: {self.browser_profile.user_data_dir}"
+            )
+            try:
+                self.playwright_context = await p.chromium.launch_persistent_context(
+                    user_data_dir=self.browser_profile.user_data_dir,
+                    headless=self.browser_profile.headless,
+                    executable_path=self.browser_profile.executable_path,
+                    args=self.browser_profile.args,
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                    viewport=self.browser_profile.viewport,
+                )
+                if self.playwright_context.pages:
+                    self.agent_current_page = self.playwright_context.pages[0]
+                else:
+                    self.agent_current_page = await self.playwright_context.new_page()
+                logger.info(
+                    f"Launched persistent context with profile: {self.browser_profile.user_data_dir}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to launch persistent context with user_data_dir '{self.browser_profile.user_data_dir}': {e}",
+                    exc_info=True,
+                )
+                logger.info("Falling back to non-persistent context launch.")
+                await self._launch_non_persistent_context(p)
+        else:
+            logger.info(
+                "Launching non-persistent context (no user_data_dir specified in profile)."
+            )
+            await self._launch_non_persistent_context(p)
+
+        self.initialized = True
+        logger.info("Browser session started.")
+
+    async def _launch_non_persistent_context(self, playwright_instance):
+        """Helper method to launch a non-persistent browser context."""
+        self.browser = await playwright_instance.chromium.launch(
+            headless=self.browser_profile.headless,
+            executable_path=self.browser_profile.executable_path,
+            args=self.browser_profile.args,
+        )
+        self.playwright_context = await self.browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            viewport=self.browser_profile.viewport,
+        )
+        if self.browser_profile.storage_state and os.path.exists(
+            self.browser_profile.storage_state
+        ):
+            logger.info(
+                f"Loading storage state for new context from: {self.browser_profile.storage_state}"
+            )
+            try:
+                with open(self.browser_profile.storage_state, "r") as f:
+                    storage_state_dict = json.load(f)
+                await self.playwright_context.add_cookies(
+                    storage_state_dict.get("cookies", [])
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to load storage state from '{self.browser_profile.storage_state}': {e}",
+                    exc_info=True,
+                )
+
+        self.agent_current_page = await self.playwright_context.new_page()
+        logger.info("Launched non-persistent context.")
+
+    async def stop(self):
+        if self.playwright_context:
+            await self.playwright_context.close()
+            self.playwright_context = None
+        if self.browser:
+            await self.browser.close()
+            self.browser = None
+        if self.playwright:
+            await self.playwright.stop()
+            self.playwright = None
+        logger.info("Browser session stopped.")
+
+    async def get_current_page(self) -> Page:
+        if not self.agent_current_page or self.agent_current_page.is_closed():
+            if self.playwright_context and self.playwright_context.pages:
+                self.agent_current_page = self.playwright_context.pages[0]
+            elif self.playwright_context:
+                self.agent_current_page = await self.playwright_context.new_page()
+            else:
+                raise PlaywrightError("Browser context not available to get a page.")
+        if not self.agent_current_page:
+            raise PlaywrightError("Failed to get or create a current page.")
+        return self.agent_current_page
+
+    async def navigate(self, url: str):
+        page = await self.get_current_page()
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+    async def remove_highlights(self):
+        page = await self.get_current_page()
+        try:
+            await page.evaluate(
+                """
+                () => {
+                    const container = document.getElementById('playwright-highlight-container');
+                    if (container) {
+                        container.remove();
+                    }
+                }
+                """
+            )
+        except Exception as e:
+            logger.debug(f"Could not remove highlights: {e}")
+
+    async def get_state_summary(
+        self, cache_clickable_elements_hashes: bool = True
+    ) -> BrowserStateSummary:
+        page = await self.get_current_page()
+        title = await page.title()
+        url = page.url
+
+        if self.browser_profile.highlight_elements:
+            await self.remove_highlights()
+
+        selector_map_mock: Dict[int, Any] = {}
+        try:
+            from browspi.services.dom.service import DomService
+
+            dom_service = DomService(page)
+            dom_state = await dom_service.get_clickable_elements(
+                highlight_elements=True,
+            )
+            selector_map_mock = dom_state.selector_map
+        except Exception as e:
+            logger.error(f"Error extracting elements for mock selector_map: {e}")
+
+        screenshot_b64 = None
+        try:
+            screenshot_bytes = await page.screenshot()
+            screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+        except Exception as e:
+            logger.warning(f"Could not take screenshot: {e}")
+
+        selector_map_for_pydantic = {k: v.__dict__ for k, v in selector_map_mock.items()}
+
+        summary = BrowserStateSummary(
+            url=url,
+            title=title,
+            selector_map=selector_map_for_pydantic,
+            screenshot=screenshot_b64,
+        )
+        self._cached_browser_state_summary = summary
+
+        if cache_clickable_elements_hashes:
+            current_hashes = {info.get('xpath') for info in selector_map_for_pydantic.values()}
+            if self._cached_clickable_element_hashes:
+                pass
+            self._cached_clickable_element_hashes = {
+                "url": url,
+                "hashes": current_hashes,
+            }
+
+        return summary
+
+    async def _get_xpath(self, element: ElementHandle) -> str:
+        return await element.evaluate(
+            """
+            el => {
+                if (!el || el.nodeType !== 1) return '';
+                const paths = [];
+                for (; el && el.nodeType === 1; el = el.parentNode) {
+                    let index = 0;
+                    for (let sibling = el.previousSibling; sibling; sibling = sibling.previousSibling) {
+                        if (sibling.nodeType === 1 && sibling.nodeName === el.nodeName) {
+                            index++;
+                        }
+                    }
+                    const tagName = el.nodeName.toLowerCase();
+                    const pathIndex = (index ? `[${index + 1}]` : '');
+                    paths.splice(0, 0, tagName + pathIndex);
+                }
+                return paths.length ? '/' + paths.join('/') : '';
+            }
+        """
+        )
+
+    async def close_tab(self, page_id: int):
+        if self.playwright_context and 0 <= page_id < len(
+            self.playwright_context.pages
+        ):
+            page_to_close = self.playwright_context.pages[page_id]
+            if page_to_close == self.agent_current_page:
+                self.agent_current_page = None
+            await page_to_close.close()
+            logger.info(f"Closed tab with index: {page_id}")
+        else:
+            logger.warning(
+                f"Tab index {page_id} out of range or context not available."
+            )
+
+    SelectorMap = dict[int, DOMElementNode]
+
+    async def get_selector_map(self) -> SelectorMap:
+        if self._cached_browser_state_summary is None:
+            return {}
+        return self._cached_browser_state_summary.selector_map
+
+    async def find_file_upload_element_by_index(
+        self, index: int
+    ) -> DOMElementNode | None:
+        """
+        Find a file upload element related to the element at the given index:
+        - Check if the element itself is a file input
+        - Check if it's a label pointing to a file input
+        - Recursively search children for file inputs
+        - Check siblings for file inputs
+
+        Args:
+            index: The index of the candidate element (could be a file input, label, or parent element)
+
+        Returns:
+            The DOM element for the file input if found, None otherwise
+        """
+        try:
+            selector_map = await self.get_selector_map()
+            if index not in selector_map:
+                return None
+
+            candidate_element = selector_map[index]
+
+            def is_file_input(node: DOMElementNode) -> bool:
+                return (
+                    isinstance(node, DOMElementNode)
+                    and node.tag_name == "input"
+                    and node.attributes.get("type") == "file"
+                )
+
+            def find_element_by_id(
+                node: DOMElementNode, element_id: str
+            ) -> DOMElementNode | None:
+                if isinstance(node, DOMElementNode):
+                    if node.attributes.get("id") == element_id:
+                        return node
+                    for child in node.children:
+                        result = find_element_by_id(child, element_id)
+                        if result:
+                            return result
+                return None
+
+            def get_root(node: DOMElementNode) -> DOMElementNode:
+                root = node
+                while root.parent:
+                    root = root.parent
+                return root
+
+            def find_file_input_recursive(
+                node: DOMElementNode, max_depth: int = 3, current_depth: int = 0
+            ) -> DOMElementNode | None:
+                if current_depth > max_depth or not isinstance(node, DOMElementNode):
+                    return None
+
+                if is_file_input(node):
+                    return node
+
+                if node.children and current_depth < max_depth:
+                    for child in node.children:
+                        if isinstance(child, DOMElementNode):
+                            result = find_file_input_recursive(
+                                child, max_depth, current_depth + 1
+                            )
+                            if result:
+                                return result
+                return None
+
+            if is_file_input(candidate_element):
+                return candidate_element
+
+            if (
+                candidate_element.tag_name == "label"
+                and candidate_element.attributes.get("for")
+            ):
+                input_id = candidate_element.attributes.get("for")
+                root_element = get_root(candidate_element)
+
+                target_input = find_element_by_id(root_element, input_id)
+                if target_input and is_file_input(target_input):
+                    return target_input
+
+            child_result = find_file_input_recursive(candidate_element)
+            if child_result:
+                return child_result
+
+            if candidate_element.parent:
+                for sibling in candidate_element.parent.children:
+                    if sibling is not candidate_element and isinstance(
+                        sibling, DOMElementNode
+                    ):
+                        if is_file_input(sibling):
+                            return sibling
+            return None
+
+        except Exception as e:
+            logger.debug(f"Error in find_file_upload_element_by_index: {e}")
+            return None
+
+    async def get_locate_element(self, element: DOMElementNode) -> ElementHandle | None:
+        page = await self.get_current_page()
+        current_frame = page
+
+        parents: list[DOMElementNode] = []
+        current = element
+        while current.parent is not None:
+            parent = current.parent
+            parents.append(parent)
+            current = parent
+
+        parents.reverse()
+
+        iframes = [item for item in parents if item.tag_name == "iframe"]
+        for parent in iframes:
+            css_selector = self._enhanced_css_selector_for_element(
+                parent,
+                include_dynamic_attributes=self.browser_profile.include_dynamic_attributes,
+            )
+            current_frame = current_frame.frame_locator(css_selector)
+
+        css_selector = self._enhanced_css_selector_for_element(
+            element,
+            include_dynamic_attributes=self.browser_profile.include_dynamic_attributes,
+        )
+
+        try:
+            if isinstance(current_frame, FrameLocator):
+                element_handle = await current_frame.locator(
+                    css_selector
+                ).element_handle()
+                return element_handle
+            else:
+                element_handle = await current_frame.query_selector(css_selector)
+                if element_handle:
+                    is_visible = await self._is_visible(element_handle)
+                    if is_visible:
+                        await element_handle.scroll_into_view_if_needed()
+                    return element_handle
+                return None
+        except Exception as e:
+            logger.error(f"❌  Failed to locate element: {str(e)}")
+            return None
+
+
         
 def addLoggingLevel(levelName, levelNum, methodName=None):
     if not methodName:

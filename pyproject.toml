@@ -6,7 +6,7 @@ authors = [
     {name = "trunkey2003",email = "21521049@gm.uit.edu.vn"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<4.0"
 dependencies = [
     "dotenv (>=0.9.9,<0.10.0)",
     "langchain-openai (>=0.3.17,<0.4.0)",
@@ -16,7 +16,8 @@ dependencies = [
     "pypdf2 (>=3.0.1,<4.0.0)",
     "langchain-core (>=0.3.64,<0.4.0)",
     "gradio (>=5.34.0,<6.0.0)",
-    "matplotlib (>=3.10.3,<4.0.0)"
+    "matplotlib (>=3.10.3,<4.0.0)",
+    "langchain-google-genai (>=2.1.6,<3.0.0)"
 ]
 
 [tool.poetry]

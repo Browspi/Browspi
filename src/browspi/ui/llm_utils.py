@@ -33,9 +33,19 @@ def get_llm_provider(provider: str, api_key: str | None = None) -> BaseLanguageM
                 "Mistral provider requires 'langchain-mistralai' to be installed. It seems to be installed already."
             )
 
-    # Thêm các nhà cung cấp khác ở đây nếu cần
-    # elif provider == "Google":
-    #     ...
+    elif provider == "Gemini":
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            import os
+            print("Using Gemini provider")
+
+            if not os.getenv("GOOGLE_API_KEY"):
+                raise ValueError("GOOGLE_API_KEY environment variable not set")
+            return ChatGoogleGenerativeAI(model="gemini-pro", temperature=0)
+        except ImportError:
+            raise ImportError(
+                "Gemini provider requires 'langchain-google-genai' to be installed. Please run 'poetry add langchain-google-genai'"
+            )
 
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")

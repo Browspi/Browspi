@@ -200,7 +200,7 @@ def create_interface():
                         with gr.Accordion("LLM Settings", open=True):
                             llm_provider_dropdown = gr.Dropdown(
                                 label="LLM Provider",
-                                choices=["OpenAI", "Mistral"],
+                                choices=["OpenAI", "Gemini"],
                                 value="OpenAI",
                             )
 
